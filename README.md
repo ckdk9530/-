@@ -132,7 +132,3 @@ python server/worker.py
 * [ ] 引入 OpenTelemetry 以串接全链路 Trace。
 * [ ] 将 FTP 上传改为 HTTPS + JWT 验证。
 * [ ] 自动化 Helm Chart 以便后续迁移到 K8s。
-
----
-
-版权所有 © 2025 築本科技. 本项目基于 MIT License 发布。
