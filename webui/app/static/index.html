@@ -12,12 +12,13 @@
     #image-pane img { max-width: 100%; max-height: 80vh; }
     #nav-buttons { margin-top: 1rem; }
     li { cursor: pointer; margin: 2px 0; }
+    .selected { background: #e0e0ff; }
   </style>
 </head>
 <body>
   <div id="container">
     <div id="search-pane">
-      <input type="text" id="search-box" placeholder="搜索關鍵字">
+      <input type="text" id="search-box" placeholder="搜尋關鍵字">
       <button onclick="doSearch()">搜尋</button>
       <ul id="search-results"></ul>
     </div>
@@ -34,6 +35,8 @@
   let treeData = {};
   let currentList = [];
   let currentIndex = -1;
+  let selectedDateLi = null;
+  let selectedResultLi = null;
 
   function loadTree() {
     fetch('/api/tree').then(r => r.json()).then(data => { treeData = data; renderTree(); });
@@ -49,7 +52,7 @@
       for (const date in treeData[pc]) {
         const dateLi = document.createElement('li');
         dateLi.textContent = date;
-        dateLi.onclick = () => selectImages(treeData[pc][date]);
+        dateLi.onclick = () => selectImages(treeData[pc][date], dateLi);
         dateList.appendChild(dateLi);
       }
       pcDiv.appendChild(dateList);
@@ -57,9 +60,11 @@
     }
   }
 
-  function selectImages(imgList) {
+  function selectImages(imgList, elem) {
     currentList = imgList;
     currentIndex = 0;
+    if (selectedDateLi) selectedDateLi.classList.remove('selected');
+    if (elem) { elem.classList.add('selected'); selectedDateLi = elem; }
     displayImage();
   }
 
@@ -86,16 +91,31 @@
     fetch('/api/search?q=' + encodeURIComponent(q)).then(r => r.json()).then(results => {
       const list = document.getElementById('search-results');
       list.innerHTML = '';
+      if (results.length === 0) {
+        const empty = document.createElement('li');
+        empty.textContent = '沒有結果';
+        list.appendChild(empty);
+      }
       results.forEach(r => {
         const li = document.createElement('li');
         li.textContent = `${r.pc} ${r.date} ${r.text}`;
-        li.onclick = () => { currentList = [{id:r.id, path:r.path}]; currentIndex = 0; displayImage(); };
+        li.onclick = () => {
+          currentList = [{id:r.id, path:r.path}];
+          currentIndex = 0;
+          if (selectedResultLi) selectedResultLi.classList.remove('selected');
+          li.classList.add('selected');
+          selectedResultLi = li;
+          displayImage();
+        };
         list.appendChild(li);
       });
     });
   }
 
   loadTree();
+  document.getElementById('search-box').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doSearch();
+  });
   </script>
 </body>
 </html>
