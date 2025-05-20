@@ -7,7 +7,7 @@
 1. **Capture Agent** — 安装在员工电脑上的后台进程，每 5 秒自动截屏并上传。
 2. **Synology NAS** — 集中存储原始截图，同时预留容器环境以承载后续 Web 前端。
 3. **GPU Workstation** — 运行 OmniParser GPU worker、PostgreSQL 数据库以及自托管 AI‑Proxy。
-4. **Web 前端（规划中）** — FastAPI + React Dashboard，部署在 NAS Docker 上，读取 Workstation 上的数据库并就地渲染 OCR / LLM 结果。
+4. **Web 前端（草稿）** — FastAPI + React Dashboard，部署在 NAS Docker 上，读取 Workstation 上的数据库并就地渲染 OCR / LLM 结果。
 
 ## 硬件与网络架构
 
@@ -48,8 +48,8 @@
 │   └── omni_parser/...
 ├── nas/
 │   ├── sync.py              # 定时將路徑寫入 Postgres
-│   └── docker-compose.yml   # Web‑UI (WIP)
-└── webui/ (WIP)
+│   └── docker-compose.yml   # Web‑UI (draft)
+└── webui/ (draft)
     ├── app/main.py          # FastAPI 入口
     └── frontend/           # React + Tailwind
 ```
@@ -75,11 +75,12 @@
 4. 将 `json_payload` 与摘要写回数据库；
 5. 若失败，`status` 标记 `error` 并记录日志。
 
-### 4. Web 前端（规划中）
+### 4. Web 前端（草稿）
 
 * **后端**：FastAPI，运行在 NAS Docker；提供图像预览、OCR JSON 展示、全文搜索与权限管理 API。
 * **前端**：React + Tailwind + shadcn/ui，可视化图表使用 Recharts。
 * **连接**：通过环境变量 `DATABASE_URL` 直连 GPU Workstation 上的 Postgres。
+* **启动草稿**：`uvicorn webui.app.main:app --reload` ，浏览器打开 `http://localhost:8000/static/index.html` 查看介面。
 
 ### 5. AI‑Proxy (`cloudflare/ai-proxy/index.ts`)
 
