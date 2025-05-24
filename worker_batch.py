@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import List, Tuple
 
+import paddle
+
 import torch
 import gc
 from PIL import Image
@@ -128,6 +130,7 @@ def omni_parse_json_batch(
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+        paddle.device.cuda.empty_cache()
 
     return outputs
 
@@ -283,6 +286,7 @@ def worker_loop():
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                paddle.device.cuda.empty_cache()
 
 # ───────────────────────────
 # Boot
