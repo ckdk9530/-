@@ -26,6 +26,8 @@ import io
 
 import torch
 import gc
+import contextlib
+import io
 from PIL import Image
 
 # ───────────────────────────
