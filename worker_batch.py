@@ -85,6 +85,7 @@ def omni_parse_json_single(
         output_bb_format="xyxy",
         easyocr_args={"paragraph": False, "text_threshold": 0.9},
         use_paddleocr=use_paddleocr,
+        paddle_ocr=GLOBAL_PADDLE_OCR,
     )
     _, _, parsed = get_som_labeled_img(
         img,
@@ -119,6 +120,7 @@ def omni_parse_json_batch(
             output_bb_format="xyxy",
             easyocr_args={"paragraph": False, "text_threshold": 0.9},
             use_paddleocr=use_paddleocr,
+            paddle_ocr=GLOBAL_PADDLE_OCR,
         )
         _, _, parsed = get_som_labeled_img(
             img,

@@ -62,9 +62,6 @@ caption_model_processor = get_caption_model_processor(
 # 建立全域 PaddleOCR 單例，避免重複 build predictor
 GLOBAL_PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE.type == "cuda"))
 
-# 建立全域 PaddleOCR 單例，避免重複 build predictor
-GLOBAL_PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE.type == "cuda"))
-
 @torch.inference_mode()
 def omni_parse_json(
     image_path: str | Path,
