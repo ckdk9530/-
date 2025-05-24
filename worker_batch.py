@@ -82,13 +82,16 @@ def omni_parse_json_single(
     imgsz: int = 640,
 ):
     img = Image.open(image_path).convert("RGB")
-    ocr_json = json.loads(
-        OCR_POOL.submit(
-            subprocess.check_output,
-            ["python", "-m", "OmniParser.util.ocr_worker", str(image_path)],
-            text=True,
-        ).result()
-    )
+    ocr_raw = OCR_POOL.submit(
+        subprocess.check_output,
+        ["python", "-m", "OmniParser.util.ocr_worker", str(image_path)],
+        text=True,
+    ).result()
+    if not ocr_raw.strip().startswith("{"):
+        start = ocr_raw.find("{")
+        end = ocr_raw.rfind("}")
+        ocr_raw = ocr_raw[start : end + 1]
+    ocr_json = json.loads(ocr_raw)
     ocr_text, ocr_bbox = ocr_json["ocr_text"], ocr_json["ocr_bbox"]
     _, _, parsed = get_som_labeled_img(
         img,
@@ -126,7 +129,12 @@ def omni_parse_json_batch(
 
     outputs: List[List[str]] = []
     for img, fut in zip(imgs, ocr_futures):
-        ocr_json = json.loads(fut.result())
+        ocr_raw = fut.result()
+        if not ocr_raw.strip().startswith("{"):
+            start = ocr_raw.find("{")
+            end = ocr_raw.rfind("}")
+            ocr_raw = ocr_raw[start : end + 1]
+        ocr_json = json.loads(ocr_raw)
         ocr_text, ocr_bbox = ocr_json["ocr_text"], ocr_json["ocr_bbox"]
         _, _, parsed = get_som_labeled_img(
             img,
