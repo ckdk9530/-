@@ -51,19 +51,103 @@ def _get_paddle_ocr(use_gpu: bool = True) -> "PaddleOCR":
     """
     if PaddleOCR is None:
         raise RuntimeError("PaddleOCR package is not installed")
-
-    # 與原始專案設定相同的 OCR 參數
-    reader = easyocr.Reader(['en'])
     return PaddleOCR(
         lang='ch',              # other lang also available
         use_angle_cls=False,
-        use_gpu=use_gpu,        # 使用 cuda 可能與 pytorch 相衝
+        use_gpu=use_gpu,
+        rec_batch_num=1024,   # 依 GPU 調整
         show_log=False,
         max_batch_size=1024,
         use_dilation=True,      # improves accuracy
         det_db_score_mode='slow',  # improves accuracy
-        rec_batch_num=1024
+        gpu_mem=4000       # 先預約顯存 (MB)；不足時自動增長
     )
+
+# ──────────────────────────────
+# Main function
+# ──────────────────────────────
+def check_ocr_box(
+    image_source: Union[str, Image.Image],
+    *,
+    display_img: bool = False,
+    output_bb_format: str = "xywh",
+    goal_filtering=None,
+    easyocr_args: dict | None = None,
+    use_paddleocr: bool = True,
+    paddle_ocr: "PaddleOCR" | None = None,
+    text_threshold: float = 0.5,
+) -> Tuple[Tuple[List[str], List[Tuple[int, int, int, int]]], any]:
+    """
+    文字偵測與內容擷取（PaddleOCR / EasyOCR 二選一）
+
+    Parameters
+    ----------
+    image_source : str | PIL.Image
+        檔案路徑或已載入的影像。
+    display_img  : bool
+        True 時即時把 bbox 畫在圖上並 show。
+    output_bb_format : 'xywh' | 'xyxy'
+        輸出方框格式；預設 'xywh' = (x, y, w, h)。
+    goal_filtering : Any
+        保留與舊版相同的佔位；原樣回傳。
+    easyocr_args  : dict | None
+        傳給 easyocr.Reader.readtext 的參數。
+    use_paddleocr : bool
+        True → 用 PaddleOCR；False → 用 EasyOCR。
+    paddle_ocr    : PaddleOCR | None
+        若外部先建好實例可傳進來；否則自動取得單例。
+    text_threshold: float
+        PaddleOCR 的置信度門檻值。
+
+    Returns
+    -------
+    ((texts, bboxes), goal_filtering)
+        texts  : List[str]    – 過 threshold 的辨識文字
+        bboxes : List[Tuple]  – 依 output_bb_format 回傳座標
+    """
+    # ----------------- 讀圖 -----------------
+    if isinstance(image_source, str):
+        image_source = Image.open(image_source)
+    if image_source.mode == "RGBA":
+        image_source = image_source.convert("RGB")
+    image_np = np.asarray(image_source)
+
+    # ----------------- OCR ------------------
+    if use_paddleocr:
+        paddle_ocr = paddle_ocr or _get_paddle_ocr(use_gpu=True)
+        result = paddle_ocr.ocr(image_np, cls=False)[0]
+        coord = [item[0]      for item in result if item[1][1] >= text_threshold]
+        text  = [item[1][0]   for item in result if item[1][1] >= text_threshold]
+    else:
+        import easyocr
+        if easyocr_args is None:
+            easyocr_args = {"paragraph": False, "text_threshold": 0.9}
+        # lang / gpu 參數從 easyocr_args 抽出，避免 readtext() 不識別
+        lang_list = easyocr_args.pop("lang", ["en"])
+        use_gpu   = easyocr_args.pop("gpu", True)
+        reader = easyocr.Reader(lang_list, gpu=use_gpu)
+        result = reader.readtext(image_np, **easyocr_args)
+        coord = [item[0] for item in result]
+        text  = [item[1] for item in result]
+
+    # -------------- bbox 轉格式 --------------
+    if output_bb_format.lower() == "xywh":
+        bboxes = [get_xywh(c) for c in coord]
+    elif output_bb_format.lower() == "xyxy":
+        bboxes = [get_xyxy(c) for c in coord]
+    else:
+        raise ValueError(f"Unsupported output_bb_format: {output_bb_format}")
+
+    # -------------- 選擇展示 ---------------
+    if display_img:
+        opencv_img = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+        for x, y, w, h in bboxes:
+            cv2.rectangle(opencv_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        plt.imshow(cv2.cvtColor(opencv_img, cv2.COLOR_BGR2RGB))
+        plt.axis("off")
+        plt.show()
+
+    return (text, bboxes), goal_filtering
 
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
     if not device:
@@ -521,86 +605,3 @@ def get_xywh_yolo(input):
     x, y, w, h = input[0], input[1], input[2] - input[0], input[3] - input[1]
     x, y, w, h = int(x), int(y), int(w), int(h)
     return x, y, w, h
-
-def check_ocr_box(
-    image_source: Union[str, Image.Image],
-    *,
-    display_img: bool = False,
-    output_bb_format: str = "xywh",
-    goal_filtering=None,
-    easyocr_args: dict | None = None,
-    use_paddleocr: bool = True,
-    paddle_ocr: "PaddleOCR" | None = None,
-    text_threshold: float = 0.5,
-) -> Tuple[Tuple[List[str], List[Tuple[int, int, int, int]]], any]:
-    """
-    文字偵測與內容擷取（PaddleOCR / EasyOCR 二選一）
-
-    Parameters
-    ----------
-    image_source : str | PIL.Image
-        檔案路徑或已載入的影像。
-    display_img  : bool
-        True 時即時把 bbox 畫在圖上並 show。
-    output_bb_format : 'xywh' | 'xyxy'
-        輸出方框格式；預設 'xywh' = (x, y, w, h)。
-    goal_filtering : Any
-        保留與舊版相同的佔位；原樣回傳。
-    easyocr_args  : dict | None
-        傳給 easyocr.Reader.readtext 的參數。
-    use_paddleocr : bool
-        True → 用 PaddleOCR；False → 用 EasyOCR。
-    paddle_ocr    : PaddleOCR | None
-        若外部先建好實例可傳進來；否則自動取得單例。
-    text_threshold: float
-        PaddleOCR 的置信度門檻值。
-
-    Returns
-    -------
-    ((texts, bboxes), goal_filtering)
-        texts  : List[str]    – 過 threshold 的辨識文字
-        bboxes : List[Tuple]  – 依 output_bb_format 回傳座標
-    """
-    # ----------------- 讀圖 -----------------
-    if isinstance(image_source, str):
-        image_source = Image.open(image_source)
-    if image_source.mode == "RGBA":
-        image_source = image_source.convert("RGB")
-    image_np = np.asarray(image_source)
-
-    # ----------------- OCR ------------------
-    if use_paddleocr:
-        paddle_ocr = paddle_ocr or _get_paddle_ocr(use_gpu=True)
-        result = paddle_ocr.ocr(image_np, cls=False)[0]
-        coord = [item[0]      for item in result if item[1][1] >= text_threshold]
-        text  = [item[1][0]   for item in result if item[1][1] >= text_threshold]
-    else:
-        import easyocr
-        if easyocr_args is None:
-            easyocr_args = {"paragraph": False, "text_threshold": 0.9}
-        # lang / gpu 參數從 easyocr_args 抽出，避免 readtext() 不識別
-        lang_list = easyocr_args.pop("lang", ["en"])
-        use_gpu   = easyocr_args.pop("gpu", True)
-        reader = easyocr.Reader(lang_list, gpu=use_gpu)
-        result = reader.readtext(image_np, **easyocr_args)
-        coord = [item[0] for item in result]
-        text  = [item[1] for item in result]
-
-    # -------------- bbox 轉格式 --------------
-    if output_bb_format.lower() == "xywh":
-        bboxes = [get_xywh(c) for c in coord]
-    elif output_bb_format.lower() == "xyxy":
-        bboxes = [get_xyxy(c) for c in coord]
-    else:
-        raise ValueError(f"Unsupported output_bb_format: {output_bb_format}")
-
-    # -------------- 選擇展示 ---------------
-    if display_img:
-        opencv_img = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-        for x, y, w, h in bboxes:
-            cv2.rectangle(opencv_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        plt.imshow(cv2.cvtColor(opencv_img, cv2.COLOR_BGR2RGB))
-        plt.axis("off")
-        plt.show()
-
-    return (text, bboxes), goal_filtering
