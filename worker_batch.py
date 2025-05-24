@@ -51,13 +51,12 @@ BATCH_SIZE = args.batch_size
 # Model utils
 # ───────────────────────────
 from OmniParser.util.utils import (
-    check_ocr_box,
     get_caption_model_processor,
     get_som_labeled_img,
     get_yolo_model,
-    _get_paddle_ocr,                # <──── util 中的單例 helper
 )
-from util.memory import release_ocr_gpu_cache
+import subprocess
+from concurrent.futures import ProcessPoolExecutor
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -68,8 +67,8 @@ caption_model_processor = get_caption_model_processor(
     device=DEVICE,
 )
 
-# 建立全域 PaddleOCR 單例，避免重複 build predictor
-GLOBAL_PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
+# OCR 子行程池
+OCR_POOL = ProcessPoolExecutor(max_workers=2)
 
 # ───────────────────────────
 # Inference helpers
@@ -83,14 +82,14 @@ def omni_parse_json_single(
     imgsz: int = 640,
 ):
     img = Image.open(image_path).convert("RGB")
-    (ocr_text, ocr_bbox), _ = check_ocr_box(
-        img,
-        display_img=False,
-        output_bb_format="xyxy",
-        easyocr_args={"paragraph": False, "text_threshold": 0.9},
-        use_paddleocr=use_paddleocr,
-        paddle_ocr=GLOBAL_PADDLE_OCR,
+    ocr_json = json.loads(
+        OCR_POOL.submit(
+            subprocess.check_output,
+            ["python", "-m", "OmniParser.util.ocr_worker", str(image_path)],
+            text=True,
+        ).result()
     )
+    ocr_text, ocr_bbox = ocr_json["ocr_text"], ocr_json["ocr_bbox"]
     _, _, parsed = get_som_labeled_img(
         img,
         yolo_model,
@@ -116,16 +115,19 @@ def omni_parse_json_batch(
     imgs = [Image.open(p).convert("RGB") for p in image_paths]
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
-    outputs: List[List[str]] = []
-    for img in imgs:
-        (ocr_text, ocr_bbox), _ = check_ocr_box(
-            img,
-            display_img=False,
-            output_bb_format="xyxy",
-            easyocr_args={"paragraph": False, "text_threshold": 0.9},
-            use_paddleocr=use_paddleocr,
-            paddle_ocr=GLOBAL_PADDLE_OCR,
+    ocr_futures = [
+        OCR_POOL.submit(
+            subprocess.check_output,
+            ["python", "-m", "OmniParser.util.ocr_worker", str(p)],
+            text=True,
         )
+        for p in image_paths
+    ]
+
+    outputs: List[List[str]] = []
+    for img, fut in zip(imgs, ocr_futures):
+        ocr_json = json.loads(fut.result())
+        ocr_text, ocr_bbox = ocr_json["ocr_text"], ocr_json["ocr_bbox"]
         _, _, parsed = get_som_labeled_img(
             img,
             yolo_model,
@@ -140,7 +142,6 @@ def omni_parse_json_batch(
         outputs.append([i.get("content", "") for i in parsed if i.get("content")])
 
     # 主動清理未再使用的張量並釋放 GPU 快取
-    release_ocr_gpu_cache(GLOBAL_PADDLE_OCR)
     del imgs
     gc.collect()
     if torch.cuda.is_available():
@@ -332,3 +333,5 @@ if __name__ == "__main__":
             time.sleep(60)
     except KeyboardInterrupt:
         logging.info("Shutdown – bye")
+    finally:
+        OCR_POOL.shutdown(wait=True)
