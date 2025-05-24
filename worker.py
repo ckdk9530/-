@@ -38,11 +38,12 @@ DEBUG_IMG = args.img
 # ───────────────────────────
 # Model (inline omni_parse_json) – returns TEXT items only
 # ───────────────────────────
-from util.utils import (
+from OmniParser.util.utils import (
     check_ocr_box,
     get_yolo_model,
     get_caption_model_processor,
     get_som_labeled_img,
+    _get_paddle_ocr,            # 單例取得 PaddleOCR
 )
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -57,6 +58,9 @@ caption_model_processor = get_caption_model_processor(
     model_name="florence2",
     model_name_or_path="weights/icon_caption_florence",
 )
+
+# 建立全域 PaddleOCR 單例，避免重複 build predictor
+GLOBAL_PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE.type == "cuda"))
 
 @torch.inference_mode()
 def omni_parse_json(
@@ -73,6 +77,7 @@ def omni_parse_json(
         output_bb_format="xyxy",
         easyocr_args={"paragraph": False, "text_threshold": 0.9},
         use_paddleocr=use_paddleocr,
+        paddle_ocr=GLOBAL_PADDLE_OCR,
     )
     _, _, parsed = get_som_labeled_img(
         img,
