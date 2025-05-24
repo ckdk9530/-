@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OmniParser Worker – DB driven, JSON only  (v16 – PaddleOCR singleton)
-====================================================================
+OmniParser Worker – DB driven, JSON only  (v15 – debug progress)
+================================================================
 * v12: 修正 get_yolo_model 無 device 參數
 * v13: 移除 get_som_labeled_img 的 yolo_result
 * v14: 在 --debug-dir 模式新增統計 (count / total / avg / min / max)
 * v15: --debug-dir 執行時改為輸出進度，不列印 JSON 內容
-* v16: 建立 PaddleOCR 單例，顯示傳入 check_ocr_box()，徹底避免多次 Predictor
 """
 from __future__ import annotations
 
@@ -21,12 +20,14 @@ import time
 from pathlib import Path
 from typing import List, Tuple
 
+import paddle
 import contextlib
 import io
-import gc
 
-import paddle
 import torch
+import gc
+import contextlib
+import io
 from PIL import Image
 
 # ───────────────────────────
@@ -51,7 +52,6 @@ from util.utils import (
     get_caption_model_processor,
     get_som_labeled_img,
     get_yolo_model,
-    _get_paddle_ocr,                # <──── util 中的單例 helper
 )
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,7 +84,6 @@ def omni_parse_json_single(
         output_bb_format="xyxy",
         easyocr_args={"paragraph": False, "text_threshold": 0.9},
         use_paddleocr=use_paddleocr,
-        paddle_ocr=GLOBAL_PADDLE_OCR,          # <── 顯式傳入
     )
     _, _, parsed = get_som_labeled_img(
         img,
@@ -119,7 +118,6 @@ def omni_parse_json_batch(
             output_bb_format="xyxy",
             easyocr_args={"paragraph": False, "text_threshold": 0.9},
             use_paddleocr=use_paddleocr,
-            paddle_ocr=GLOBAL_PADDLE_OCR,      # <── 顯式傳入
         )
         _, _, parsed = get_som_labeled_img(
             img,
@@ -143,6 +141,15 @@ def omni_parse_json_batch(
 
     return outputs
 
+
+def sec_to_hms(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS string."""
+    seconds = int(round(seconds))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
 # ───────────────────────────
 # Debug shortcuts
 # ───────────────────────────
@@ -153,22 +160,15 @@ if DEBUG and not DEBUG_DIR:
 
 if DEBUG_DIR:
     imgs = sorted(
-        [p for p in Path(DEBUG_DIR).rglob("*")
-         if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
+        [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
     )
     print(f"Total images: {len(imgs)}")
     start_all = time.perf_counter()
     durations: List[float] = []
     processed = 0
 
-    def _hms(sec: float) -> str:
-        h = int(sec // 3600)
-        m = int((sec % 3600) // 60)
-        s = int(sec % 60)
-        return f"{h:02}:{m:02}:{s:02}"
-
     for i in range(0, len(imgs), BATCH_SIZE):
-        batch = imgs[i:i + BATCH_SIZE]
+        batch = imgs[i : i + BATCH_SIZE]
         t0 = time.perf_counter()
         with contextlib.redirect_stdout(io.StringIO()):
             _ = omni_parse_json_batch(batch)
@@ -179,30 +179,29 @@ if DEBUG_DIR:
 
         processed += len(batch)
         elapsed = time.perf_counter() - start_all
-        avg_per_img = sum(durations) / len(durations)
-        remaining = max(len(imgs) - processed, 0) * avg_per_img
-
+        avg_so_far = sum(durations) / len(durations)
+        eta = max(len(imgs) - processed, 0) * avg_so_far
         print(
             f"{processed}/{len(imgs)} {per_img:.3f}s "
-            f"elapsed {_hms(elapsed)} remain {_hms(remaining)}"
+            f"(elapsed {sec_to_hms(elapsed)}, eta {sec_to_hms(eta)})"
         )
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
     print(f"Images : {len(imgs)}")
-    print(f"Total  : {total_time:.3f}s")
+    print(f"Total  : {sec_to_hms(total_time)}")
     if imgs:
-        print(f"Avg    : {total_time / len(imgs):.3f}s")
-        print(f"Min    : {min(durations):.3f}s")
-        print(f"Max    : {max(durations):.3f}s")
+        print(f"Avg    : {sec_to_hms(total_time / len(imgs))}")
+        print(f"Min    : {sec_to_hms(min(durations))}")
+        print(f"Max    : {sec_to_hms(max(durations))}")
     sys.exit()
 
 # ───────────────────────────
 # Normal-mode Config & DB deps
 # ───────────────────────────
-LOG_LEVEL = "INFO"
-THREADS = 4           # DB 輪詢 / commit 執行緒數
-BATCH_SIZE = 8        # ➜ GPU 一次推論張數 / DB claim
+LOG_LEVEL  = "INFO"
+THREADS    = 4           # DB 輪詢 / commit 執行緒數
+BATCH_SIZE = 8           # ➜ GPU 一次推論張數 / DB claim
 
 DB_URL = (
     "postgresql+psycopg2://omniapp:"
@@ -210,7 +209,7 @@ DB_URL = (
     "@127.0.0.1:5432/screencap"
 )
 
-DB_PREFIX = Path("/volume1/ScreenshotService")
+DB_PREFIX    = Path("/volume1/ScreenshotService")
 LOCAL_PREFIX = Path("/mnt/nas/inbox")
 
 from sqlalchemy import create_engine, text  # noqa: E402
@@ -244,6 +243,7 @@ def sha256_file(fp: Path) -> str:
 # ───────────────────────────
 MAC_ADDR = "omni-worker"
 
+# ... (stats_* functions 保持原樣) ...
 from sqlalchemy import text as _text
 
 def stats_init(conn):
@@ -254,7 +254,7 @@ def stats_init(conn):
     """), dict(m=MAC_ADDR))
 
 # 其餘 stats_*、claim_tasks、update_capture_done、mark_error 與原版一致
-# …
+# 為節省篇幅，若未顯示請從原檔複製；或確保函式簽名不變。
 
 # ───────────────────────────
 # Worker thread – batch version
@@ -279,8 +279,7 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
         db_paths.append(row["img_path"])
 
     parsed_batch = omni_parse_json_batch(paths)
-    return [(cid, db_p, sha, parsed) for cid, db_p, sha, parsed in zip(
-        cids, db_paths, map(sha256_file, paths), parsed_batch)]
+    return [(cid, db_p, sha, parsed) for cid, db_p, sha, parsed in zip(cids, db_paths, map(sha256_file, paths), parsed_batch)]
 
 
 def worker_loop():
@@ -291,6 +290,7 @@ def worker_loop():
             continue
         try:
             with engine.begin() as conn:
+                # 記錄目前批次第一張做進度即可
                 stats_progress(conn, rows[0]["img_path"])
             batch_info = handle_rows(rows)
             with engine.begin() as conn:
