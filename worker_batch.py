@@ -138,6 +138,15 @@ def omni_parse_json_batch(
 
     return outputs
 
+
+def sec_to_hms(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS string."""
+    seconds = int(round(seconds))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
 # ───────────────────────────
 # Debug shortcuts
 # ───────────────────────────
@@ -171,17 +180,17 @@ if DEBUG_DIR:
         eta = max(len(imgs) - processed, 0) * avg_so_far
         print(
             f"{processed}/{len(imgs)} {per_img:.3f}s "
-            f"(elapsed {elapsed:.1f}s, eta {eta:.1f}s)"
+            f"(elapsed {sec_to_hms(elapsed)}, eta {sec_to_hms(eta)})"
         )
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
     print(f"Images : {len(imgs)}")
-    print(f"Total  : {total_time:.3f}s")
+    print(f"Total  : {sec_to_hms(total_time)}")
     if imgs:
-        print(f"Avg    : {total_time / len(imgs):.3f}s")
-        print(f"Min    : {min(durations):.3f}s")
-        print(f"Max    : {max(durations):.3f}s")
+        print(f"Avg    : {sec_to_hms(total_time / len(imgs))}")
+        print(f"Min    : {sec_to_hms(min(durations))}")
+        print(f"Max    : {sec_to_hms(max(durations))}")
     sys.exit()
 
 # ───────────────────────────
