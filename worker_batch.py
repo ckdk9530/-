@@ -24,6 +24,8 @@ import paddle
 
 import torch
 import gc
+import contextlib
+import io
 from PIL import Image
 
 # ───────────────────────────
@@ -154,7 +156,8 @@ if DEBUG_DIR:
     for i in range(0, len(imgs), BATCH_SIZE):
         batch = imgs[i : i + BATCH_SIZE]
         t0 = time.perf_counter()
-        _ = omni_parse_json_batch(batch)
+        with contextlib.redirect_stdout(io.StringIO()):
+            _ = omni_parse_json_batch(batch)
         t1 = time.perf_counter()
 
         per_img = (t1 - t0) / len(batch)
