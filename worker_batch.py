@@ -166,7 +166,13 @@ if DEBUG_DIR:
         durations.extend([per_img] * len(batch))
 
         processed += len(batch)
-        print(f"{processed}/{len(imgs)} {per_img:.3f}s")
+        elapsed = time.perf_counter() - start_all
+        avg_so_far = sum(durations) / len(durations)
+        eta = max(len(imgs) - processed, 0) * avg_so_far
+        print(
+            f"{processed}/{len(imgs)} {per_img:.3f}s "
+            f"(elapsed {elapsed:.1f}s, eta {eta:.1f}s)"
+        )
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
