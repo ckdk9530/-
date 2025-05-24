@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OmniParser Worker – DB driven, JSON only  (v14 – debug summary)
+OmniParser Worker – DB driven, JSON only  (v15 – debug progress)
 ================================================================
 * v12: 修正 get_yolo_model 無 device 參數
 * v13: 移除 get_som_labeled_img 的 yolo_result
 * v14: 在 --debug-dir 模式新增統計 (count / total / avg / min / max)
+* v15: --debug-dir 執行時改為輸出進度，不列印 JSON 內容
 """
 from __future__ import annotations
 
@@ -142,21 +143,23 @@ if DEBUG_DIR:
     imgs = sorted(
         [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
     )
+    print(f"Total images: {len(imgs)}")
     start_all = time.perf_counter()
     durations: List[float] = []
+    processed = 0
 
     for i in range(0, len(imgs), BATCH_SIZE):
         batch = imgs[i : i + BATCH_SIZE]
         t0 = time.perf_counter()
-        results = omni_parse_json_batch(batch)
+        _ = omni_parse_json_batch(batch)
         t1 = time.perf_counter()
 
         per_img = (t1 - t0) / len(batch)
         durations.extend([per_img] * len(batch))
 
-        for fp, txts in zip(batch, results):
-            print("#", fp)
-            print(json.dumps(txts, ensure_ascii=False))
+        for _ in batch:
+            processed += 1
+            print(f"{processed}/{len(imgs)} {per_img:.3f}s")
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
