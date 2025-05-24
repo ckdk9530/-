@@ -33,7 +33,7 @@ import re
 from torchvision.transforms import ToPILImage
 import supervision as sv
 import torchvision.transforms as T
-from util.box_annotator import BoxAnnotator
+from .box_annotator import BoxAnnotator
 
 # ──────────────────────────────
 # Singleton for PaddleOCR
