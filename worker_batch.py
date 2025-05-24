@@ -162,6 +162,12 @@ if DEBUG_DIR:
     durations: List[float] = []
     processed = 0
 
+    def _hms(sec: float) -> str:
+        h = int(sec // 3600)
+        m = int((sec % 3600) // 60)
+        s = int(sec % 60)
+        return f"{h:02}:{m:02}:{s:02}"
+
     for i in range(0, len(imgs), BATCH_SIZE):
         batch = imgs[i:i + BATCH_SIZE]
         t0 = time.perf_counter()
@@ -173,7 +179,14 @@ if DEBUG_DIR:
         durations.extend([per_img] * len(batch))
 
         processed += len(batch)
-        print(f"{processed}/{len(imgs)} {per_img:.3f}s")
+        elapsed = time.perf_counter() - start_all
+        avg_per_img = sum(durations) / len(durations)
+        remaining = max(len(imgs) - processed, 0) * avg_per_img
+
+        print(
+            f"{processed}/{len(imgs)} {per_img:.3f}s "
+            f"elapsed {_hms(elapsed)} remain {_hms(remaining)}"
+        )
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
