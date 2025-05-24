@@ -20,6 +20,9 @@ import time
 from pathlib import Path
 from typing import List, Tuple
 
+import os
+os.environ["FLAGS_allocator_strategy"] = "auto_growth"  # GPU 記憶體按需配置
+
 import paddle
 import contextlib
 import io
@@ -44,11 +47,6 @@ DEBUG_IMG: str | None = args.img
 DEBUG_DIR: str | None = args.debug_dir
 BATCH_SIZE = args.batch_size
 
-# 在模型載入前釋放可能殘留的 GPU 快取
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
-    paddle.device.cuda.empty_cache()
-
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
@@ -59,6 +57,7 @@ from OmniParser.util.utils import (
     get_yolo_model,
     _get_paddle_ocr,                # <──── util 中的單例 helper
 )
+from util.memory import release_ocr_gpu_cache
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -141,6 +140,7 @@ def omni_parse_json_batch(
         outputs.append([i.get("content", "") for i in parsed if i.get("content")])
 
     # 主動清理未再使用的張量並釋放 GPU 快取
+    release_ocr_gpu_cache(GLOBAL_PADDLE_OCR)
     del imgs
     gc.collect()
     if torch.cuda.is_available():
