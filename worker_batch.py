@@ -46,7 +46,7 @@ BATCH_SIZE = args.batch_size
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
-from util.utils import (
+from OmniParser.util.utils import (
     check_ocr_box,
     get_caption_model_processor,
     get_som_labeled_img,
