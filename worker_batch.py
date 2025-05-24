@@ -160,9 +160,8 @@ if DEBUG_DIR:
         per_img = (t1 - t0) / len(batch)
         durations.extend([per_img] * len(batch))
 
-        for _ in batch:
-            processed += 1
-            print(f"{processed}/{len(imgs)} {per_img:.3f}s")
+        processed += len(batch)
+        print(f"{processed}/{len(imgs)} {per_img:.3f}s")
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
