@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import torch
+import gc
 from PIL import Image
 
 # ───────────────────────────
@@ -120,6 +121,13 @@ def omni_parse_json_batch(
             imgsz=imgsz,
         )
         outputs.append([i.get("content", "") for i in parsed if i.get("content")])
+
+    # 主動清理未再使用的張量並釋放 GPU 快取
+    del imgs
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return outputs
 
 # ───────────────────────────
@@ -268,6 +276,10 @@ def worker_loop():
                 for r in rows:
                     mark_error(conn, r["id"])
                 stats_done(conn, err=len(rows))
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 # ───────────────────────────
 # Boot
