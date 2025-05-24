@@ -47,11 +47,12 @@ BATCH_SIZE = args.batch_size
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
-from util.utils import (
+from OmniParser.util.utils import (
     check_ocr_box,
     get_caption_model_processor,
     get_som_labeled_img,
     get_yolo_model,
+    _get_paddle_ocr,                # <──── util 中的單例 helper
 )
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

@@ -38,7 +38,7 @@ DEBUG_IMG = args.img
 # ───────────────────────────
 # Model (inline omni_parse_json) – returns TEXT items only
 # ───────────────────────────
-from util.utils import (
+from OmniParser.util.utils import (
     check_ocr_box,
     get_yolo_model,
     get_caption_model_processor,
