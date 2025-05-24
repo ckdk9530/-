@@ -44,7 +44,7 @@ except ImportError:  # 若完全不需要 PaddleOCR，可忽略
     PaddleOCR = None
 
 @lru_cache(maxsize=1)
-def _get_paddle_ocr(use_gpu: bool = True) -> "PaddleOCR":
+def _get_paddle_ocr(use_gpu: bool = True, rec_batch_num: int = 1024) -> "PaddleOCR":
     """
     回傳全域唯一 PaddleOCR 實例；第二次呼叫會直接重用，
     不再重新 build predictor，顯存占用固定。
@@ -55,7 +55,7 @@ def _get_paddle_ocr(use_gpu: bool = True) -> "PaddleOCR":
         lang='ch',              # other lang also available
         use_angle_cls=False,
         use_gpu=use_gpu,
-        rec_batch_num=1024,   # 依 GPU 調整
+        rec_batch_num=rec_batch_num,   # 依 GPU 調整
         show_log=False,
         max_batch_size=1024,
         use_dilation=True,      # improves accuracy
