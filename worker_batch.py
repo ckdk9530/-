@@ -142,21 +142,22 @@ if DEBUG_DIR:
     imgs = sorted(
         [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
     )
+    print(f"Images total: {len(imgs)}")
     start_all = time.perf_counter()
     durations: List[float] = []
 
     for i in range(0, len(imgs), BATCH_SIZE):
         batch = imgs[i : i + BATCH_SIZE]
         t0 = time.perf_counter()
-        results = omni_parse_json_batch(batch)
+        _ = omni_parse_json_batch(batch)
         t1 = time.perf_counter()
 
         per_img = (t1 - t0) / len(batch)
         durations.extend([per_img] * len(batch))
 
-        for fp, txts in zip(batch, results):
-            print("#", fp)
-            print(json.dumps(txts, ensure_ascii=False))
+        for j in range(len(batch)):
+            idx = i + j + 1
+            print(f"{idx}/{len(imgs)} {per_img:.3f}s")
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")

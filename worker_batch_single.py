@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 from typing import List, Tuple
+import gc
 
 import torch
 from PIL import Image
@@ -267,6 +268,10 @@ def worker_loop():
                 for r in rows:
                     mark_error(conn, r["id"])
                 stats_done(conn, err=len(rows))
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 # ───────────────────────────
 # Boot

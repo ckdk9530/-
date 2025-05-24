@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+import gc
 
 import torch
 from PIL import Image
@@ -238,6 +239,10 @@ def worker_loop():
                 with engine.begin() as conn:
                     mark_error(conn, row["id"])
                     stats_done(conn, err=1)
+            finally:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
 # ───────────────────────────
 # Boot normal mode
