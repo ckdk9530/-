@@ -44,6 +44,11 @@ DEBUG_IMG: str | None = args.img
 DEBUG_DIR: str | None = args.debug_dir
 BATCH_SIZE = args.batch_size
 
+# 在模型載入前釋放可能殘留的 GPU 快取
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    paddle.device.cuda.empty_cache()
+
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
