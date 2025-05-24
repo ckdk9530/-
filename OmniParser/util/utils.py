@@ -21,16 +21,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 import easyocr
 from paddleocr import PaddleOCR
-reader = easyocr.Reader(['en'])
-paddle_ocr = PaddleOCR(
-    lang='ch',  # other lang also available
-    use_angle_cls=False,
-    use_gpu=True,  # using cuda will conflict with pytorch in the same process
-    show_log=False,
-    max_batch_size=1024,
-    use_dilation=True,  # improves accuracy
-    det_db_score_mode='slow',  # improves accuracy
-    rec_batch_num=1024)
 import time
 import base64
 
