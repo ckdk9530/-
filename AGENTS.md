@@ -1,3 +1,4 @@
 # AGENT Instructions
 
 所有與代理的交互對話應以繁體中文進行。
+OmniParser是CaptureFlow用到的另外一個項目的源代碼，需要的時候我們也會對OmniParser進行修改。
