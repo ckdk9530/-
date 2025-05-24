@@ -63,9 +63,8 @@ caption_model_processor = get_caption_model_processor(
     device=DEVICE,
 )
 
-# ==== 變更點 1：在主程式先建好 PaddleOCR 單例 ====
+# 建立全域 PaddleOCR 單例，避免重複 build predictor
 GLOBAL_PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
-# ================================================
 
 # ───────────────────────────
 # Inference helpers
