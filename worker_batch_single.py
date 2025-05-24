@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 from typing import List, Tuple
+import gc
 
 import torch
 from PIL import Image
@@ -65,7 +66,8 @@ def omni_parse_json_single(
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ):
-    img = Image.open(image_path).convert("RGB")
+    with Image.open(image_path) as _im:
+        img = _im.convert("RGB")
     (ocr_text, ocr_bbox), _ = check_ocr_box(
         img,
         display_img=False,
@@ -84,7 +86,10 @@ def omni_parse_json_single(
         iou_threshold=iou_threshold,
         imgsz=imgsz,
     )
-    return [i.get("content", "") for i in parsed if i.get("content")]
+    result = [i.get("content", "") for i in parsed if i.get("content")]
+    if hasattr(img, "close"):
+        img.close()
+    return result
 
 
 @torch.inference_mode()
@@ -95,7 +100,10 @@ def omni_parse_json_batch(
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ) -> List[List[str]]:
-    imgs = [Image.open(p).convert("RGB") for p in image_paths]
+    imgs = []
+    for p in image_paths:
+        with Image.open(p) as _im:
+            imgs.append(_im.convert("RGB"))
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
     outputs: List[List[str]] = []
@@ -119,6 +127,9 @@ def omni_parse_json_batch(
             imgsz=imgsz,
         )
         outputs.append([i.get("content", "") for i in parsed if i.get("content")])
+        if hasattr(img, "close"):
+            img.close()
+    del imgs
     return outputs
 
 # ───────────────────────────
@@ -267,6 +278,11 @@ def worker_loop():
                 for r in rows:
                     mark_error(conn, r["id"])
                 stats_done(conn, err=len(rows))
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
 
 # ───────────────────────────
 # Boot

@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+import gc
 
 import torch
 from PIL import Image
@@ -66,7 +67,8 @@ def omni_parse_json(
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ):
-    img = Image.open(image_path).convert("RGB")
+    with Image.open(image_path) as _im:
+        img = _im.convert("RGB")
     (ocr_text, ocr_bbox), _ = check_ocr_box(
         img,
         display_img=False,
@@ -87,6 +89,8 @@ def omni_parse_json(
     )
     # ─── Filter: keep only items where type == "text" ───
     parsed = [item.get("content", "") for item in parsed if item.get("content")]
+    if hasattr(img, "close"):
+        img.close()
     return parsed
 
 # ───────────────────────────
@@ -238,6 +242,11 @@ def worker_loop():
                 with engine.begin() as conn:
                     mark_error(conn, row["id"])
                     stats_done(conn, err=1)
+            finally:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
 
 # ───────────────────────────
 # Boot normal mode

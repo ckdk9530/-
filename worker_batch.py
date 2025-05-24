@@ -97,7 +97,10 @@ def omni_parse_json_batch(
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ) -> List[List[str]]:
-    imgs = [Image.open(p).convert("RGB") for p in image_paths]
+    imgs = []
+    for p in image_paths:
+        with Image.open(p) as _im:
+            imgs.append(_im.convert("RGB"))
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
     outputs: List[List[str]] = []
@@ -121,12 +124,15 @@ def omni_parse_json_batch(
             imgsz=imgsz,
         )
         outputs.append([i.get("content", "") for i in parsed if i.get("content")])
+        if hasattr(img, "close"):
+            img.close()
 
     # 主動清理未再使用的張量並釋放 GPU 快取
     del imgs
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
     return outputs
 
@@ -280,6 +286,7 @@ def worker_loop():
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
 
 # ───────────────────────────
 # Boot
