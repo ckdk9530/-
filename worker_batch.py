@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import List, Tuple
 
 import paddle
+import contextlib
+import io
 
 import torch
 import gc
@@ -154,15 +156,15 @@ if DEBUG_DIR:
     for i in range(0, len(imgs), BATCH_SIZE):
         batch = imgs[i : i + BATCH_SIZE]
         t0 = time.perf_counter()
-        _ = omni_parse_json_batch(batch)
+        with contextlib.redirect_stdout(io.StringIO()):
+            _ = omni_parse_json_batch(batch)
         t1 = time.perf_counter()
 
         per_img = (t1 - t0) / len(batch)
         durations.extend([per_img] * len(batch))
 
-        for _ in batch:
-            processed += 1
-            print(f"{processed}/{len(imgs)} {per_img:.3f}s")
+        processed += len(batch)
+        print(f"{processed}/{len(imgs)} {per_img:.3f}s")
 
     total_time = time.perf_counter() - start_all
     print("\n=== Summary ===")
