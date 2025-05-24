@@ -51,18 +51,18 @@ def _get_paddle_ocr(use_gpu: bool = True) -> "PaddleOCR":
     """
     if PaddleOCR is None:
         raise RuntimeError("PaddleOCR package is not installed")
-
     # 與原始專案設定相同的 OCR 參數
     reader = easyocr.Reader(['en'])
     return PaddleOCR(
         lang='ch',              # other lang also available
         use_angle_cls=False,
-        use_gpu=use_gpu,        # 使用 cuda 可能與 pytorch 相衝
+        use_gpu=use_gpu,
+        rec_batch_num=1024,   # 依 GPU 調整
         show_log=False,
         max_batch_size=1024,
         use_dilation=True,      # improves accuracy
         det_db_score_mode='slow',  # improves accuracy
-        rec_batch_num=1024
+        gpu_mem=4000       # 先預約顯存 (MB)；不足時自動增長
     )
 
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
