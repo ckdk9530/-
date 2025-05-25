@@ -579,7 +579,8 @@ def check_ocr_box(
     # ----------------- OCR ------------------
     if use_paddleocr:
         paddle_ocr = paddle_ocr or _get_paddle_ocr(use_gpu=True)
-        result = paddle_ocr.ocr(image_np, cls=False)[0]
+        raw_result = paddle_ocr.ocr(image_np, cls=False)
+        result = raw_result[0] if raw_result else []
         coord = [item[0]      for item in result if item[1][1] >= text_threshold]
         text  = [item[1][0]   for item in result if item[1][1] >= text_threshold]
     else:
