@@ -48,11 +48,7 @@ from OmniParser.util.utils import (
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-yolo_model = get_yolo_model(model_path="weights/icon_detect/model.pt")
-try:
-    yolo_model = yolo_model.to(DEVICE)  # ignore if .to not available
-except AttributeError:
-    pass
+yolo_model = get_yolo_model("weights/icon_detect/model.pt", device=DEVICE)
 
 caption_model_processor = get_caption_model_processor(
     model_name="florence2",

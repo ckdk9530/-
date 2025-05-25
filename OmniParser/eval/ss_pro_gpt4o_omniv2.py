@@ -25,10 +25,7 @@ from PIL import Image
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 SOM_MODEL_PATH='...'
 CAPTION_MODEL_PATH='...'
-som_model = get_yolo_model(SOM_MODEL_PATH)
-
-som_model.to(device)
-print('model to {}'.format(device))
+som_model = get_yolo_model(SOM_MODEL_PATH, device=device)
 
 # two choices for caption model: fine-tuned blip2 or florence2
 import importlib
