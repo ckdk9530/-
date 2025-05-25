@@ -26,13 +26,12 @@ os.environ["FLAGS_allocator_strategy"] = "auto_growth"  # GPU 記憶體按需配
 import paddle
 import contextlib
 import io
+from queue import Queue
 
 from util.memory import debug_gpu_memory, release_ocr_gpu_cache
 
 import torch
 import gc
-import contextlib
-import io
 from PIL import Image
 
 # ───────────────────────────
@@ -73,6 +72,39 @@ caption_model_processor = get_caption_model_processor(
 PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
 
 # ───────────────────────────
+# OCR worker thread & queue
+# ───────────────────────────
+OCR_QUEUE: "Queue" = Queue()
+
+def _ocr_worker():
+    while True:
+        img, res_q, use_paddle = OCR_QUEUE.get()
+        if img is None:
+            break
+        try:
+            result = check_ocr_box(
+                img,
+                output_bb_format="xyxy",
+                use_paddleocr=use_paddle,
+                paddle_ocr=PADDLE_OCR if use_paddle else None,
+                easyocr_args={"paragraph": False, "text_threshold": 0.9},
+            )
+        except Exception as e:
+            result = e
+        res_q.put(result)
+
+_OCR_THREAD = threading.Thread(target=_ocr_worker, daemon=True)
+_OCR_THREAD.start()
+
+def _queue_ocr(img, use_paddleocr=True):
+    q = Queue()
+    OCR_QUEUE.put((img, q, use_paddleocr))
+    result = q.get()
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+# ───────────────────────────
 # Inference helpers
 # ───────────────────────────
 @torch.inference_mode()
@@ -84,13 +116,7 @@ def omni_parse_json_single(
     imgsz: int = 640,
 ):
     img = Image.open(image_path).convert("RGB")
-    (ocr_text, ocr_bbox), _ = check_ocr_box(
-        img,
-        output_bb_format="xyxy",
-        use_paddleocr=use_paddleocr,
-        paddle_ocr=PADDLE_OCR,
-        easyocr_args={"paragraph": False, "text_threshold": 0.9},
-    )
+    (ocr_text, ocr_bbox), _ = _queue_ocr(img, use_paddleocr)
     _, _, parsed = get_som_labeled_img(
         img,
         yolo_model,
@@ -117,13 +143,7 @@ def omni_parse_json_batch(
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
     ocr_results = [
-        check_ocr_box(
-            img,
-            output_bb_format="xyxy",
-            use_paddleocr=use_paddleocr,
-            paddle_ocr=PADDLE_OCR,
-            easyocr_args={"paragraph": False, "text_threshold": 0.9},
-        )[0]
+        _queue_ocr(img, use_paddleocr)[0]
         for img in imgs
     ]
 
