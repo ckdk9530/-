@@ -152,8 +152,8 @@ from sqlalchemy import create_engine, text  # noqa: E402
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s [%(levelname)s] %(message)s")
 engine = create_engine(DB_URL, pool_size=THREADS*2, max_overflow=0)
 
-# 影像預讀快取，預設保留 5 張
-PREFETCHER = ImagePrefetcher(size=5)
+# 影像預讀快取，容量為兩個分批大小
+PREFETCHER = ImagePrefetcher(size=BATCH_SIZE * 2)
 
 # ───────────────────────────
 # Helper functions
@@ -258,13 +258,21 @@ def handle_row(row):
 
 
 def worker_loop():
+    task_queue: list[dict] = []
     while True:
-        tasks = claim_tasks(BATCH_SIZE)
-        if not tasks:
+        # 確保快取中維持兩個分批的圖片
+        if len(task_queue) < BATCH_SIZE * 2:
+            new_tasks = claim_tasks(BATCH_SIZE * 2 - len(task_queue))
+            if new_tasks:
+                PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in new_tasks)
+                task_queue.extend(new_tasks)
+
+        if not task_queue:
             time.sleep(2)
             continue
-        PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in tasks)
-        for row in tasks:
+
+        batch = [task_queue.pop(0) for _ in range(min(BATCH_SIZE, len(task_queue)))]
+        for row in batch:
             try:
                 with engine.begin() as conn:
                     stats_progress(conn, row["img_path"])

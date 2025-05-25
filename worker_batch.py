@@ -259,8 +259,8 @@ logging.basicConfig(
 )
 engine = create_engine(DB_URL, pool_size=THREADS * 2, max_overflow=0)
 
-# 影像預讀快取，預設保留 5 張
-PREFETCHER = ImagePrefetcher(size=5)
+# 影像預讀快取，容量為兩個分批大小
+PREFETCHER = ImagePrefetcher(size=BATCH_SIZE * 2)
 
 # ───────────────────────────
 # Helper functions (unchanged)
@@ -334,12 +334,20 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
 
 
 def worker_loop():
+    task_queue: list[dict] = []
     while True:
-        rows = claim_tasks(BATCH_SIZE)
-        if not rows:
-            time.sleep(2)
+        if len(task_queue) < BATCH_SIZE * 2:
+            new_rows = claim_tasks(BATCH_SIZE * 2 - len(task_queue))
+            if new_rows:
+                PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in new_rows)
+                task_queue.extend(new_rows)
+
+        if len(task_queue) < BATCH_SIZE:
+            if not task_queue:
+                time.sleep(2)
             continue
-        PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in rows)
+
+        rows = [task_queue.pop(0) for _ in range(min(BATCH_SIZE, len(task_queue)))]
         try:
             with engine.begin() as conn:
                 # 記錄目前批次第一張做進度即可
