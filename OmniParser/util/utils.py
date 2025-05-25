@@ -581,6 +581,9 @@ def check_ocr_box(
         paddle_ocr = paddle_ocr or _get_paddle_ocr(use_gpu=True)
         raw_result = paddle_ocr.ocr(image_np, cls=False)
         result = raw_result[0] if raw_result else []
+        # PaddleOCR 在部分失敗案例會回傳 [None]，導致後續解析出錯
+        if result is None or not isinstance(result, list):
+            result = []
         coord = [item[0]      for item in result if item[1][1] >= text_threshold]
         text  = [item[1][0]   for item in result if item[1][1] >= text_threshold]
     else:
