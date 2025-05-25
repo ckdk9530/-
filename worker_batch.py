@@ -51,12 +51,12 @@ BATCH_SIZE = args.batch_size
 # Model utils
 # ───────────────────────────
 from OmniParser.util.utils import (
+    check_ocr_box,
     get_caption_model_processor,
     get_som_labeled_img,
     get_yolo_model,
+    _get_paddle_ocr,
 )
-import subprocess
-from concurrent.futures import ProcessPoolExecutor
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -67,8 +67,8 @@ caption_model_processor = get_caption_model_processor(
     device=DEVICE,
 )
 
-# OCR 子行程池
-OCR_POOL = ProcessPoolExecutor(max_workers=2)
+# 預先建立 PaddleOCR 實例，避免重複載入
+PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
 
 # ───────────────────────────
 # Inference helpers
@@ -82,17 +82,13 @@ def omni_parse_json_single(
     imgsz: int = 640,
 ):
     img = Image.open(image_path).convert("RGB")
-    ocr_raw = OCR_POOL.submit(
-        subprocess.check_output,
-        ["python", "-m", "OmniParser.util.ocr_worker", str(image_path)],
-        text=True,
-    ).result()
-    if not ocr_raw.strip().startswith("{"):
-        start = ocr_raw.find("{")
-        end = ocr_raw.rfind("}")
-        ocr_raw = ocr_raw[start : end + 1]
-    ocr_json = json.loads(ocr_raw)
-    ocr_text, ocr_bbox = ocr_json["ocr_text"], ocr_json["ocr_bbox"]
+    (ocr_text, ocr_bbox), _ = check_ocr_box(
+        img,
+        output_bb_format="xyxy",
+        use_paddleocr=use_paddleocr,
+        paddle_ocr=PADDLE_OCR,
+        easyocr_args={"paragraph": False, "text_threshold": 0.9},
+    )
     _, _, parsed = get_som_labeled_img(
         img,
         yolo_model,
@@ -118,24 +114,19 @@ def omni_parse_json_batch(
     imgs = [Image.open(p).convert("RGB") for p in image_paths]
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
-    ocr_futures = [
-        OCR_POOL.submit(
-            subprocess.check_output,
-            ["python", "-m", "OmniParser.util.ocr_worker", str(p)],
-            text=True,
-        )
-        for p in image_paths
+    ocr_results = [
+        check_ocr_box(
+            img,
+            output_bb_format="xyxy",
+            use_paddleocr=use_paddleocr,
+            paddle_ocr=PADDLE_OCR,
+            easyocr_args={"paragraph": False, "text_threshold": 0.9},
+        )[0]
+        for img in imgs
     ]
 
     outputs: List[List[str]] = []
-    for img, fut in zip(imgs, ocr_futures):
-        ocr_raw = fut.result()
-        if not ocr_raw.strip().startswith("{"):
-            start = ocr_raw.find("{")
-            end = ocr_raw.rfind("}")
-            ocr_raw = ocr_raw[start : end + 1]
-        ocr_json = json.loads(ocr_raw)
-        ocr_text, ocr_bbox = ocr_json["ocr_text"], ocr_json["ocr_bbox"]
+    for img, (ocr_text, ocr_bbox) in zip(imgs, ocr_results):
         _, _, parsed = get_som_labeled_img(
             img,
             yolo_model,
@@ -342,4 +333,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logging.info("Shutdown – bye")
     finally:
-        OCR_POOL.shutdown(wait=True)
+        pass
