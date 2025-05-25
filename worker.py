@@ -33,11 +33,9 @@ from util.prefetch import ImagePrefetcher
 cli_parser = argparse.ArgumentParser()
 cli_parser.add_argument("--debug", action="store_true", help="run single‑image debug mode")
 cli_parser.add_argument("--img", help="image path for debug mode")
-cli_parser.add_argument("--ocr-worker", "--ocr_worker", type=int, default=1, help="number of OCR worker threads")
 args, _ = cli_parser.parse_known_args()
 DEBUG = args.debug
 DEBUG_IMG = args.img
-OCR_WORKERS = args.ocr_worker
 
 # ───────────────────────────
 # Model (inline omni_parse_json) – returns TEXT items only
@@ -85,11 +83,8 @@ def _ocr_worker():
             result = e
         res_q.put(result)
 
-_OCR_THREADS = []
-for _ in range(OCR_WORKERS):
-    t = threading.Thread(target=_ocr_worker, daemon=True)
-    t.start()
-    _OCR_THREADS.append(t)
+_OCR_THREAD = threading.Thread(target=_ocr_worker, daemon=True)
+_OCR_THREAD.start()
 
 def _queue_ocr(img, use_paddleocr=True):
     q = Queue()
