@@ -27,7 +27,7 @@ import paddle
 import contextlib
 import io
 
-from util.memory import debug_gpu_memory
+from util.memory import debug_gpu_memory, release_ocr_gpu_cache
 
 import torch
 import gc
@@ -148,6 +148,7 @@ def omni_parse_json_batch(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         paddle.device.cuda.empty_cache()
+        release_ocr_gpu_cache(PADDLE_OCR)
         debug_gpu_memory("omni_parse_json_batch")
 
     return outputs
