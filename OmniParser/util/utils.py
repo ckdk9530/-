@@ -18,6 +18,7 @@ import os
 import cv2
 import numpy as np
 # %matplotlib inline
+from util.memory import debug_gpu_memory
 from matplotlib import pyplot as plt
 import easyocr
 from paddleocr import PaddleOCR
@@ -51,7 +52,8 @@ def _get_paddle_ocr(use_gpu: bool = True, rec_batch_num: int = 1024) -> "PaddleO
     """
     if PaddleOCR is None:
         raise RuntimeError("PaddleOCR package is not installed")
-    return PaddleOCR(
+    debug_gpu_memory("_get_paddle_ocr (before build)")
+    ocr = PaddleOCR(
         lang='ch',              # other lang also available
         use_angle_cls=False,
         use_gpu=use_gpu,
@@ -61,6 +63,8 @@ def _get_paddle_ocr(use_gpu: bool = True, rec_batch_num: int = 1024) -> "PaddleO
         use_dilation=True,      # improves accuracy
         det_db_score_mode='slow',  # improves accuracy
     )
+    debug_gpu_memory("_get_paddle_ocr (after build)")
+    return ocr
 
 # ──────────────────────────────
 # Main function
