@@ -26,7 +26,6 @@ os.environ["FLAGS_allocator_strategy"] = "auto_growth"  # GPU 記憶體按需配
 import paddle
 import contextlib
 import io
-from queue import Queue
 
 from util.memory import debug_gpu_memory, release_ocr_gpu_cache
 
@@ -69,43 +68,19 @@ caption_model_processor = get_caption_model_processor(
     device=DEVICE,
 )
 
-# OCR 實例列表，供釋放 GPU 快取使用
-_OCR_INSTANCES: list = []
+# PaddleOCR 單例，避免重複初始化
+PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
 
-# ───────────────────────────
-# OCR worker thread & queue
-# ───────────────────────────
-OCR_QUEUE: "Queue" = Queue()
-
-def _ocr_worker():
-    # 每個執行緒建立獨立的 PaddleOCR 實例，避免併發競爭
-    paddle_ocr = _get_paddle_ocr.__wrapped__(use_gpu=(DEVICE == "cuda"))
-    _OCR_INSTANCES.append(paddle_ocr)
-    while True:
-        img, res_q, use_paddle = OCR_QUEUE.get()
-        if img is None:
-            break
-        try:
-            result = check_ocr_box(
-                img,
-                output_bb_format="xyxy",
-                use_paddleocr=use_paddle,
-                paddle_ocr=paddle_ocr if use_paddle else None,
-                easyocr_args={"paragraph": False, "text_threshold": 0.9},
-            )
-        except Exception as e:
-            result = e
-        res_q.put(result)
-
-_OCR_THREAD = threading.Thread(target=_ocr_worker, daemon=True)
-_OCR_THREAD.start()
 
 def _queue_ocr(img, use_paddleocr=True):
-    q = Queue()
-    OCR_QUEUE.put((img, q, use_paddleocr))
-    result = q.get()
-    if isinstance(result, Exception):
-        raise result
+    """直接呼叫 OCR，保持相容先前介面"""
+    result = check_ocr_box(
+        img,
+        output_bb_format="xyxy",
+        use_paddleocr=use_paddleocr,
+        paddle_ocr=PADDLE_OCR if use_paddleocr else None,
+        easyocr_args={"paragraph": False, "text_threshold": 0.9},
+    )
     return result
 
 # ───────────────────────────
@@ -153,19 +128,10 @@ def omni_parse_json_batch(
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
     # --- OCR ---
-    # 一次將整批影像送入佇列，讓多個 _ocr_worker 平行處理
-    q_list = []
-    for img in imgs:
-        q = Queue()
-        OCR_QUEUE.put((img, q, use_paddleocr))
-        q_list.append(q)
-
-    ocr_results = []
-    for q in q_list:
-        result = q.get()
-        if isinstance(result, Exception):
-            raise result
-        ocr_results.append(result[0])
+    ocr_results = [
+        _queue_ocr(img, use_paddleocr)[0]
+        for img in imgs
+    ]
 
     outputs: List[List[str]] = []
     for img, (ocr_text, ocr_bbox) in zip(imgs, ocr_results):
@@ -188,8 +154,7 @@ def omni_parse_json_batch(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         paddle.device.cuda.empty_cache()
-        for inst in _OCR_INSTANCES:
-            release_ocr_gpu_cache(inst)
+        release_ocr_gpu_cache(PADDLE_OCR)
         debug_gpu_memory("omni_parse_json_batch")
 
     return outputs
