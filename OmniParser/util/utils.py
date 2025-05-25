@@ -60,7 +60,6 @@ def _get_paddle_ocr(use_gpu: bool = True, rec_batch_num: int = 1024) -> "PaddleO
         max_batch_size=1024,
         use_dilation=True,      # improves accuracy
         det_db_score_mode='slow',  # improves accuracy
-        gpu_mem=4000       # 先預約顯存 (MB)；不足時自動增長
     )
 
 # ──────────────────────────────
@@ -149,6 +148,7 @@ def check_ocr_box(
 
     return (text, bboxes), goal_filtering
 
+@lru_cache(maxsize=1)
 def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
     if not device:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -173,10 +173,17 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
     return {'model': model.to(device), 'processor': processor}
 
 
-def get_yolo_model(model_path):
+@lru_cache(maxsize=1)
+def get_yolo_model(model_path, device=None):
     from ultralytics import YOLO
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     # Load the model.
     model = YOLO(model_path)
+    try:
+        model = model.to(device)
+    except AttributeError:
+        pass
     return model
 
 

@@ -60,7 +60,7 @@ from OmniParser.util.utils import (
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-yolo_model = get_yolo_model("weights/icon_detect/model.pt").to(DEVICE)
+yolo_model = get_yolo_model("weights/icon_detect/model.pt", device=DEVICE)
 caption_model_processor = get_caption_model_processor(
     model_name="florence2",
     model_name_or_path="weights/icon_caption_florence",
