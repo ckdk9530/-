@@ -27,6 +27,8 @@ import paddle
 import contextlib
 import io
 
+from util.memory import debug_gpu_memory
+
 import torch
 import gc
 import contextlib
@@ -146,6 +148,7 @@ def omni_parse_json_batch(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         paddle.device.cuda.empty_cache()
+        debug_gpu_memory("omni_parse_json_batch")
 
     return outputs
 
@@ -317,6 +320,7 @@ def worker_loop():
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 paddle.device.cuda.empty_cache()
+                debug_gpu_memory("worker_loop finally")
 
 # ───────────────────────────
 # Boot

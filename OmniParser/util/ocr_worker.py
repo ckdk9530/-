@@ -8,6 +8,7 @@
 import os, sys, json, gc, tempfile
 from PIL import Image
 from OmniParser.util.utils import check_ocr_box, _get_paddle_ocr
+from util.memory import debug_gpu_memory
 
 # ─ GPU 設定（想用 CPU 可以改 use_gpu=False） ───────────
 os.environ["FLAGS_allocator_strategy"] = "auto_growth"
@@ -29,6 +30,7 @@ def run(img_path):
     # 結束前盡可能清空 Pool
     import paddle
     gc.collect(); paddle.device.cuda.empty_cache()
+    debug_gpu_memory("ocr_worker run")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
