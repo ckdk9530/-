@@ -43,7 +43,10 @@ import re
 from torchvision.transforms import ToPILImage
 import supervision as sv
 import torchvision.transforms as T
-from util.box_annotator import BoxAnnotator
+# Use relative import so that utils can be imported as a package module
+# regardless of whether OmniParser is installed as a package or run from the
+# project root.
+from .box_annotator import BoxAnnotator
 
 # ──────────────────────────────
 # Singleton for PaddleOCR
