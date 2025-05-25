@@ -95,10 +95,12 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
     return {'model': model.to(device), 'processor': processor}
 
 
-def get_yolo_model(model_path):
+def get_yolo_model(model_path, device=None):
+    """Load YOLO model with optional device placement."""
     from ultralytics import YOLO
-    # Load the model.
     model = YOLO(model_path)
+    if device:
+        model.to(device)
     return model
 
 
