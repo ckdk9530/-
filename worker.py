@@ -19,6 +19,7 @@ import logging
 import os
 import sys
 import threading
+from queue import Queue
 import time
 from pathlib import Path
 
@@ -58,6 +59,40 @@ caption_model_processor = get_caption_model_processor(
 # 建立全域 PaddleOCR 單例，避免重複 build predictor
 GLOBAL_PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE.type == "cuda"))
 
+# ───────────────────────────
+# OCR worker thread & queue
+# ───────────────────────────
+OCR_QUEUE: "Queue" = Queue()
+
+def _ocr_worker():
+    while True:
+        img, res_q, use_paddle = OCR_QUEUE.get()
+        if img is None:
+            break
+        try:
+            result = check_ocr_box(
+                img,
+                display_img=False,
+                output_bb_format="xyxy",
+                easyocr_args={"paragraph": False, "text_threshold": 0.9},
+                use_paddleocr=use_paddle,
+                paddle_ocr=GLOBAL_PADDLE_OCR if use_paddle else None,
+            )
+        except Exception as e:
+            result = e
+        res_q.put(result)
+
+_OCR_THREAD = threading.Thread(target=_ocr_worker, daemon=True)
+_OCR_THREAD.start()
+
+def _queue_ocr(img, use_paddleocr=True):
+    q = Queue()
+    OCR_QUEUE.put((img, q, use_paddleocr))
+    result = q.get()
+    if isinstance(result, Exception):
+        raise result
+    return result
+
 @torch.inference_mode()
 def omni_parse_json(
     image_path: str | Path,
@@ -67,14 +102,7 @@ def omni_parse_json(
     imgsz: int = 640,
 ):
     img = Image.open(image_path).convert("RGB")
-    (ocr_text, ocr_bbox), _ = check_ocr_box(
-        img,
-        display_img=False,
-        output_bb_format="xyxy",
-        easyocr_args={"paragraph": False, "text_threshold": 0.9},
-        use_paddleocr=use_paddleocr,
-        paddle_ocr=GLOBAL_PADDLE_OCR,
-    )
+    (ocr_text, ocr_bbox), _ = _queue_ocr(img, use_paddleocr)
     _, _, parsed = get_som_labeled_img(
         img,
         yolo_model,
