@@ -33,6 +33,7 @@ from util.memory import debug_gpu_memory, release_ocr_gpu_cache
 import torch
 import gc
 from PIL import Image
+from util.prefetch import ImagePrefetcher
 
 # ───────────────────────────
 # CLI
@@ -109,13 +110,16 @@ def _queue_ocr(img, use_paddleocr=True):
 # ───────────────────────────
 @torch.inference_mode()
 def omni_parse_json_single(
-    image_path: Path,
+    image_path: Path | Image.Image,
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ):
-    img = Image.open(image_path).convert("RGB")
+    if isinstance(image_path, Image.Image):
+        img = image_path.convert("RGB")
+    else:
+        img = Image.open(image_path).convert("RGB")
     (ocr_text, ocr_bbox), _ = _queue_ocr(img, use_paddleocr)
     _, _, parsed = get_som_labeled_img(
         img,
@@ -133,13 +137,16 @@ def omni_parse_json_single(
 
 @torch.inference_mode()
 def omni_parse_json_batch(
-    image_paths: List[Path],
+    image_paths: List[Path | Image.Image],
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ) -> List[List[str]]:
-    imgs = [Image.open(p).convert("RGB") for p in image_paths]
+    imgs = [
+        (p.convert("RGB") if isinstance(p, Image.Image) else Image.open(p).convert("RGB"))
+        for p in image_paths
+    ]
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
     ocr_results = [
@@ -252,6 +259,9 @@ logging.basicConfig(
 )
 engine = create_engine(DB_URL, pool_size=THREADS * 2, max_overflow=0)
 
+# 影像預讀快取，預設保留 5 張
+PREFETCHER = ImagePrefetcher(size=5)
+
 # ───────────────────────────
 # Helper functions (unchanged)
 # ───────────────────────────
@@ -294,24 +304,33 @@ def stats_init(conn):
 
 def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
     """批量檢查雜湊 + 推論，回傳 (cid, img_path, sha_now, parsed) 列表"""
-    paths: List[Path] = []
+    paths: List[Path | Image.Image] = []
     cids: List[int] = []
     db_paths: List[str] = []
+    sha_list: List[str] = []
 
     for row in rows:
         local = db_to_local(row["img_path"])
         if not local.exists():
             raise FileNotFoundError(local)
-        sha_now = sha256_file(local)
+
+        img = PREFETCHER.pop_image(local)
+        sha_now = PREFETCHER.get_sha(local)
+        if sha_now is None:
+            sha_now = sha256_file(local)
         sha_db = row["sha256_img"] or ""
         if sha_db and sha_db != sha_now:
             raise ValueError("sha256_img mismatch")
-        paths.append(local)
+        paths.append(img if img is not None else local)
+        sha_list.append(sha_now)
         cids.append(row["id"])
         db_paths.append(row["img_path"])
 
     parsed_batch = omni_parse_json_batch(paths)
-    return [(cid, db_p, sha, parsed) for cid, db_p, sha, parsed in zip(cids, db_paths, map(sha256_file, paths), parsed_batch)]
+    return [
+        (cid, db_p, sha, parsed)
+        for cid, db_p, sha, parsed in zip(cids, db_paths, sha_list, parsed_batch)
+    ]
 
 
 def worker_loop():
@@ -320,6 +339,7 @@ def worker_loop():
         if not rows:
             time.sleep(2)
             continue
+        PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in rows)
         try:
             with engine.begin() as conn:
                 # 記錄目前批次第一張做進度即可

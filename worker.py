@@ -25,6 +25,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
+from util.prefetch import ImagePrefetcher
 
 # ───────────────────────────
 # CLI – early parse
@@ -95,13 +96,16 @@ def _queue_ocr(img, use_paddleocr=True):
 
 @torch.inference_mode()
 def omni_parse_json(
-    image_path: str | Path,
+    image_path: str | Path | Image.Image,
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
     use_paddleocr: bool = True,
     imgsz: int = 640,
 ):
-    img = Image.open(image_path).convert("RGB")
+    if isinstance(image_path, Image.Image):
+        img = image_path.convert("RGB")
+    else:
+        img = Image.open(image_path).convert("RGB")
     (ocr_text, ocr_bbox), _ = _queue_ocr(img, use_paddleocr)
     _, _, parsed = get_som_labeled_img(
         img,
@@ -147,6 +151,9 @@ from sqlalchemy import create_engine, text  # noqa: E402
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s [%(levelname)s] %(message)s")
 engine = create_engine(DB_URL, pool_size=THREADS*2, max_overflow=0)
+
+# 影像預讀快取，預設保留 5 張
+PREFETCHER = ImagePrefetcher(size=5)
 
 # ───────────────────────────
 # Helper functions
@@ -239,11 +246,14 @@ def handle_row(row):
     if not local.exists():
         raise FileNotFoundError(local)
 
-    sha_now = sha256_file(local)
+    img = PREFETCHER.pop_image(local)
+    sha_now = PREFETCHER.get_sha(local)
+    if sha_now is None:
+        sha_now = sha256_file(local)
     if sha_db and sha_db != sha_now:
         raise ValueError("sha256_img mismatch")
 
-    parsed = omni_parse_json(local)
+    parsed = omni_parse_json(img if img is not None else local)
     return sha_now, parsed
 
 
@@ -253,6 +263,7 @@ def worker_loop():
         if not tasks:
             time.sleep(2)
             continue
+        PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in tasks)
         for row in tasks:
             try:
                 with engine.begin() as conn:
