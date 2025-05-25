@@ -43,11 +43,13 @@ cli.add_argument("--debug", action="store_true", help="單張 debug")
 cli.add_argument("--img", help="單張路徑")
 cli.add_argument("--debug-dir", help="資料夾批量 debug")
 cli.add_argument("--batch-size", type=int, default=8, help="一次 GPU 推論張數")
+cli.add_argument("--ocr-worker", "--ocr_worker", type=int, default=1, help="OCR 執行緒數量")
 args, _ = cli.parse_known_args()
 DEBUG = args.debug or bool(args.debug_dir)
 DEBUG_IMG: str | None = args.img
 DEBUG_DIR: str | None = args.debug_dir
 BATCH_SIZE = args.batch_size
+OCR_WORKERS = args.ocr_worker
 
 # ───────────────────────────
 # Model utils
@@ -94,8 +96,11 @@ def _ocr_worker():
             result = e
         res_q.put(result)
 
-_OCR_THREAD = threading.Thread(target=_ocr_worker, daemon=True)
-_OCR_THREAD.start()
+_OCR_THREADS = []
+for _ in range(OCR_WORKERS):
+    t = threading.Thread(target=_ocr_worker, daemon=True)
+    t.start()
+    _OCR_THREADS.append(t)
 
 def _queue_ocr(img, use_paddleocr=True):
     q = Queue()
