@@ -154,10 +154,20 @@ def omni_parse_json_batch(
     ]
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
-    ocr_results = [
-        _queue_ocr(img, use_paddleocr)[0]
-        for img in imgs
-    ]
+    # --- OCR ---
+    # 一次將整批影像送入佇列，讓多個 _ocr_worker 平行處理
+    q_list = []
+    for img in imgs:
+        q = Queue()
+        OCR_QUEUE.put((img, q, use_paddleocr))
+        q_list.append(q)
+
+    ocr_results = []
+    for q in q_list:
+        result = q.get()
+        if isinstance(result, Exception):
+            raise result
+        ocr_results.append(result[0])
 
     outputs: List[List[str]] = []
     for img, (ocr_text, ocr_bbox) in zip(imgs, ocr_results):
