@@ -71,8 +71,8 @@ caption_model_processor = get_caption_model_processor(
     device=DEVICE,
 )
 
-# 預先建立 PaddleOCR 實例，避免重複載入
-PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
+# OCR 實例列表，供釋放 GPU 快取使用
+_OCR_INSTANCES: list = []
 
 # ───────────────────────────
 # OCR worker thread & queue
@@ -80,6 +80,9 @@ PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
 OCR_QUEUE: "Queue" = Queue()
 
 def _ocr_worker():
+    # 每個執行緒建立獨立的 PaddleOCR 實例，避免併發競爭
+    paddle_ocr = _get_paddle_ocr.__wrapped__(use_gpu=(DEVICE == "cuda"))
+    _OCR_INSTANCES.append(paddle_ocr)
     while True:
         img, res_q, use_paddle = OCR_QUEUE.get()
         if img is None:
@@ -89,7 +92,7 @@ def _ocr_worker():
                 img,
                 output_bb_format="xyxy",
                 use_paddleocr=use_paddle,
-                paddle_ocr=PADDLE_OCR if use_paddle else None,
+                paddle_ocr=paddle_ocr if use_paddle else None,
                 easyocr_args={"paragraph": False, "text_threshold": 0.9},
             )
         except Exception as e:
@@ -154,10 +157,20 @@ def omni_parse_json_batch(
     ]
     _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
 
-    ocr_results = [
-        _queue_ocr(img, use_paddleocr)[0]
-        for img in imgs
-    ]
+    # --- OCR ---
+    # 一次將整批影像送入佇列，讓多個 _ocr_worker 平行處理
+    q_list = []
+    for img in imgs:
+        q = Queue()
+        OCR_QUEUE.put((img, q, use_paddleocr))
+        q_list.append(q)
+
+    ocr_results = []
+    for q in q_list:
+        result = q.get()
+        if isinstance(result, Exception):
+            raise result
+        ocr_results.append(result[0])
 
     outputs: List[List[str]] = []
     for img, (ocr_text, ocr_bbox) in zip(imgs, ocr_results):
@@ -180,7 +193,8 @@ def omni_parse_json_batch(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         paddle.device.cuda.empty_cache()
-        release_ocr_gpu_cache(PADDLE_OCR)
+        for inst in _OCR_INSTANCES:
+            release_ocr_gpu_cache(inst)
         debug_gpu_memory("omni_parse_json_batch")
 
     return outputs
