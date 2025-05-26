@@ -283,11 +283,18 @@ MAC_ADDR = "omni-worker"
 from sqlalchemy import text as _text
 
 def stats_init(conn):
-    conn.execute(_text("""
+    conn.execute(
+        _text(
+            """
         INSERT INTO worker_stats (mac_address, processed_ok, processed_err, pending, last_update, current_img)
-        VALUES (:m, 0, 0, 0, now(), NULL)
-        ON CONFLICT (mac_address) DO NOTHING;
-    """), dict(m=MAC_ADDR))
+        SELECT :m, 0, 0, 0, now(), NULL
+        WHERE NOT EXISTS (
+            SELECT 1 FROM worker_stats WHERE mac_address = :m
+        );
+        """
+        ),
+        dict(m=MAC_ADDR),
+    )
 
 # 其餘 stats_*、claim_tasks、update_capture_done、mark_error 與原版一致
 # 為節省篇幅，若未顯示請從原檔複製；或確保函式簽名不變。
