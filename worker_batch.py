@@ -211,16 +211,21 @@ LOG_LEVEL  = "INFO"
 THREADS    = 4           # DB 輪詢 / commit 執行緒數
 # BATCH_SIZE 由 CLI 參數決定 (預設 8)
 
-DB_URL = (
-    "postgresql+psycopg2://omniapp:"
-    "uG6#9jT!wZ8rL@p2$Xv4qS1e%Nb0Ka7C"
-    "@127.0.0.1:5432/screencap"
+from sqlalchemy.engine import URL
+
+DB_URL = URL.create(
+    drivername="postgresql+psycopg2",
+    username="omniapp",
+    password="uG6#9jT!wZ8rL@p2$Xv4qS1e%Nb0Ka7C",
+    host="127.0.0.1",
+    port=5432,
+    database="screencap",
 )
 
 DB_PREFIX    = Path("/volume1/ScreenshotService")
 LOCAL_PREFIX = Path("/mnt/nas/inbox")
 
-from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
