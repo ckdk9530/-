@@ -4,8 +4,10 @@ from typing import List, Tuple
 from PIL import Image
 
 # Ensure CUDA works with multiprocessing
-if mp.get_start_method(allow_none=True) != "spawn":
-    mp.set_start_method("spawn", force=True)
+def ensure_spawn_start_method() -> None:
+    """Configure multiprocessing to use the 'spawn' start method."""
+    if mp.get_start_method(allow_none=True) != "spawn":
+        mp.set_start_method("spawn", force=True)
 
 
 class _BaseProcess(mp.Process):

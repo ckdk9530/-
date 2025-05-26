@@ -30,9 +30,8 @@ import io
 import atexit
 import multiprocessing as mp
 
-# Ensure CUDA works with multiprocessing
-if mp.get_start_method(allow_none=True) != "spawn":
-    mp.set_start_method("spawn", force=True)
+from util.model_service import ensure_spawn_start_method
+
 
 from util.memory import (
     debug_gpu_memory,
@@ -330,6 +329,8 @@ def worker_loop():
 # ───────────────────────────
 def main() -> None:
     global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER
+
+    ensure_spawn_start_method()
 
     args = _parse_args()
     DEBUG = args.debug or bool(args.debug_dir)
