@@ -50,3 +50,27 @@ def release_ocr_gpu_cache(ocr_reader):
         except Exception:
             pass
 
+
+# 控制 GPU 快取清理頻率的計數器
+_CACHE_COUNTER = 0
+
+
+def maybe_empty_gpu_cache(interval: int = 10) -> None:
+    """依照指定間隔釋放 GPU 快取，避免過度頻繁造成耗時"""
+    global _CACHE_COUNTER
+    _CACHE_COUNTER += 1
+    if _CACHE_COUNTER < interval:
+        return
+    _CACHE_COUNTER = 0
+    try:
+        if torch and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    try:
+        if paddle and paddle.is_compiled_with_cuda():
+            paddle.device.cuda.empty_cache()
+    except Exception:
+        pass
+    debug_gpu_memory("maybe_empty_gpu_cache")
+

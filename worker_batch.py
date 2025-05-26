@@ -27,7 +27,11 @@ import paddle
 import contextlib
 import io
 
-from util.memory import debug_gpu_memory, release_ocr_gpu_cache
+from util.memory import (
+    debug_gpu_memory,
+    release_ocr_gpu_cache,
+    maybe_empty_gpu_cache,
+)
 
 import torch
 import gc
@@ -148,12 +152,11 @@ def omni_parse_json_batch(
         )
         outputs.append([i.get("content", "") for i in parsed if i.get("content")])
 
-    # 主動清理未再使用的張量並釋放 GPU 快取
+    # 主動清理未再使用的張量並視需要釋放 GPU 快取
     del imgs
     gc.collect()
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        paddle.device.cuda.empty_cache()
+        maybe_empty_gpu_cache()
         release_ocr_gpu_cache(PADDLE_OCR)
         debug_gpu_memory("omni_parse_json_batch")
 
@@ -219,7 +222,7 @@ if DEBUG_DIR:
 # ───────────────────────────
 LOG_LEVEL  = "INFO"
 THREADS    = 4           # DB 輪詢 / commit 執行緒數
-BATCH_SIZE = 8           # ➜ GPU 一次推論張數 / DB claim
+# BATCH_SIZE 由 CLI 參數決定 (預設 8)
 
 DB_URL = (
     "postgresql+psycopg2://omniapp:"
@@ -238,8 +241,8 @@ logging.basicConfig(
 )
 engine = create_engine(DB_URL, pool_size=THREADS * 2, max_overflow=0)
 
-# 影像預讀快取，容量為兩個分批大小
-PREFETCHER = ImagePrefetcher(size=BATCH_SIZE * 2)
+# 影像預讀快取，容量與分批大小一致
+PREFETCHER = ImagePrefetcher(size=BATCH_SIZE)
 
 # ───────────────────────────
 # Helper functions (unchanged)
@@ -315,8 +318,8 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
 def worker_loop():
     task_queue: list[dict] = []
     while True:
-        if len(task_queue) < BATCH_SIZE * 2:
-            new_rows = claim_tasks(BATCH_SIZE * 2 - len(task_queue))
+        if len(task_queue) < BATCH_SIZE:
+            new_rows = claim_tasks(BATCH_SIZE - len(task_queue))
             if new_rows:
                 PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in new_rows)
                 task_queue.extend(new_rows)
@@ -346,8 +349,7 @@ def worker_loop():
         finally:
             gc.collect()
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                paddle.device.cuda.empty_cache()
+                maybe_empty_gpu_cache()
                 debug_gpu_memory("worker_loop finally")
 
 # ───────────────────────────
