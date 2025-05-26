@@ -257,17 +257,17 @@ def sha256_file(fp: Path) -> str:
 
 def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
     """將 debug 模式結果寫入資料庫"""
+
     with engine.begin() as conn:
         for p, txt in zip(paths, texts):
             conn.execute(
                 _text(
                     """
-                INSERT INTO captures (img_path, sha256_img, status, json_payload)
-                VALUES (:p, :s, 'done', :j)
-                ON CONFLICT (img_path) DO UPDATE
-                    SET sha256_img = EXCLUDED.sha256_img,
-                        status = 'done',
-                        json_payload = EXCLUDED.json_payload;
+                UPDATE captures
+                   SET sha256_img = :s,
+                       status = 'done',
+                       json_payload = :j
+                 WHERE img_path = :p;
                 """
                 ),
                 dict(p=str(p), s=sha256_file(p), j=json.dumps(txt, ensure_ascii=False)),
