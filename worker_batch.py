@@ -161,8 +161,8 @@ def _run_debug():
     if DEBUG_DIR:
         imgs = sorted(
             [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
-        )
-        print(f"Total images: {len(imgs)}")
+        )[:5]
+        print(f"Total images (debug first 5): {len(imgs)}")
         start_all = time.perf_counter()
         durations: List[float] = []
         processed = 0
@@ -173,6 +173,8 @@ def _run_debug():
             with contextlib.redirect_stdout(io.StringIO()):
                 results = omni_parse_json_batch(batch)
             t1 = time.perf_counter()
+
+            save_debug_results([Path(p) for p in batch], results)
 
             if PRINT_TEXT and i == 0:
                 print("First batch text:")
@@ -246,6 +248,25 @@ def sha256_file(fp: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
+    """將 debug 模式結果寫入資料庫"""
+    with engine.begin() as conn:
+        for p, txt in zip(paths, texts):
+            conn.execute(
+                _text(
+                    """
+                INSERT INTO captures (img_path, sha256_img, status, json_payload)
+                VALUES (:p, :s, 'done', :j)
+                ON CONFLICT (img_path) DO UPDATE
+                    SET sha256_img = EXCLUDED.sha256_img,
+                        status = 'done',
+                        json_payload = EXCLUDED.json_payload;
+                """
+                ),
+                dict(p=str(p), s=sha256_file(p), j=json.dumps(txt, ensure_ascii=False)),
+            )
 
 # ───────────────────────────
 # worker_stats helpers (unchanged)
