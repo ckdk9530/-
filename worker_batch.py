@@ -263,11 +263,12 @@ def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
             conn.execute(
                 _text(
                     """
-                UPDATE captures
-                   SET sha256_img = :s,
-                       status = 'done',
-                       json_payload = :j
-                 WHERE img_path = :p;
+                INSERT INTO captures (timestamp, img_path, sha256_img, status, json_payload)
+                VALUES (now(), :p, :s, 'done', :j)
+                ON CONFLICT (img_path) DO UPDATE
+                    SET sha256_img = EXCLUDED.sha256_img,
+                        status = 'done',
+                        json_payload = EXCLUDED.json_payload;
                 """
                 ),
                 dict(p=str(p), s=sha256_file(p), j=json.dumps(txt, ensure_ascii=False)),
