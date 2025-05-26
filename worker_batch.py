@@ -47,16 +47,19 @@ from util.prefetch import ImagePrefetcher
 # ───────────────────────────
 # CLI
 # ───────────────────────────
-cli = argparse.ArgumentParser()
-cli.add_argument("--debug", action="store_true", help="單張 debug")
-cli.add_argument("--img", help="單張路徑")
-cli.add_argument("--debug-dir", help="資料夾批量 debug")
-cli.add_argument("--batch-size", type=int, default=8, help="一次 GPU 推論張數")
-args, _ = cli.parse_known_args()
-DEBUG = args.debug or bool(args.debug_dir)
-DEBUG_IMG: str | None = args.img
-DEBUG_DIR: str | None = args.debug_dir
-BATCH_SIZE = args.batch_size
+def _parse_args():
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--debug", action="store_true", help="單張 debug")
+    cli.add_argument("--img", help="單張路徑")
+    cli.add_argument("--debug-dir", help="資料夾批量 debug")
+    cli.add_argument("--batch-size", type=int, default=8, help="一次 GPU 推論張數")
+    return cli.parse_args()
+
+args = None  # type: argparse.Namespace | None
+DEBUG = False
+DEBUG_IMG: str | None = None
+DEBUG_DIR: str | None = None
+BATCH_SIZE = 8
 
 # ───────────────────────────
 # Model utils
@@ -66,21 +69,26 @@ from util.model_service import YoloWorker, OCRWorker
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 子進程常駐三個模型
-yolo_proc = YoloWorker("weights/icon_detect/model.pt", device=DEVICE)
-ocr_proc = OCRWorker(use_gpu=(DEVICE == "cuda"))
-for p in (yolo_proc, ocr_proc):
-    p.start()
+yolo_proc: YoloWorker | None = None
+ocr_proc: OCRWorker | None = None
+
+def _init_model_processes():
+    global yolo_proc, ocr_proc
+    yolo_proc = YoloWorker("weights/icon_detect/model.pt", device=DEVICE)
+    ocr_proc = OCRWorker(use_gpu=(DEVICE == "cuda"))
+    for p in (yolo_proc, ocr_proc):
+        p.start()
+    atexit.register(_shutdown_processes)
 
 def _shutdown_processes():
     for p in (yolo_proc, ocr_proc):
-        p.shutdown()
-
-atexit.register(_shutdown_processes)
+        if p is not None:
+            p.shutdown()
 
 
 def _queue_ocr(path, use_paddleocr=True):
     """透過子進程執行 OCR"""
+    assert ocr_proc is not None
     ocr_proc.in_q.put((0, str(path)))
     _idx, result = ocr_proc.out_q.get()
     return result
@@ -108,10 +116,12 @@ def omni_parse_json_batch(
     paths = [str(p) for p in image_paths]
 
     # --- YOLO ---
+    assert yolo_proc is not None
     yolo_proc.in_q.put(paths)
     yolo_results = yolo_proc.out_q.get()
 
     # --- OCR ---
+    assert ocr_proc is not None
     for idx, p in enumerate(paths):
         ocr_proc.in_q.put((idx, p))
     ocr_results = [None] * len(paths)
@@ -133,48 +143,50 @@ def sec_to_hms(seconds: float) -> str:
 # ───────────────────────────
 # Debug shortcuts
 # ───────────────────────────
-if DEBUG and not DEBUG_DIR:
-    p = Path(DEBUG_IMG) if DEBUG_IMG else Path(input("Image path » ").strip())
-    print(json.dumps(omni_parse_json_single(p), ensure_ascii=False, indent=2))
-    sys.exit()
+def _run_debug():
+    if DEBUG and not DEBUG_DIR:
+        p = Path(DEBUG_IMG) if DEBUG_IMG else Path(input("Image path » ").strip())
+        print(json.dumps(omni_parse_json_single(p), ensure_ascii=False, indent=2))
+        return True
 
-if DEBUG_DIR:
-    imgs = sorted(
-        [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
-    )
-    print(f"Total images: {len(imgs)}")
-    start_all = time.perf_counter()
-    durations: List[float] = []
-    processed = 0
-
-    for i in range(0, len(imgs), BATCH_SIZE):
-        batch = imgs[i : i + BATCH_SIZE]
-        t0 = time.perf_counter()
-        with contextlib.redirect_stdout(io.StringIO()):
-            _ = omni_parse_json_batch(batch)
-        t1 = time.perf_counter()
-
-        per_img = (t1 - t0) / len(batch)
-        durations.extend([per_img] * len(batch))
-
-        processed += len(batch)
-        elapsed = time.perf_counter() - start_all
-        avg_so_far = sum(durations) / len(durations)
-        eta = max(len(imgs) - processed, 0) * avg_so_far
-        print(
-            f"{processed}/{len(imgs)} {per_img:.3f}s "
-            f"(elapsed {sec_to_hms(elapsed)}, eta {sec_to_hms(eta)})"
+    if DEBUG_DIR:
+        imgs = sorted(
+            [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
         )
+        print(f"Total images: {len(imgs)}")
+        start_all = time.perf_counter()
+        durations: List[float] = []
+        processed = 0
 
-    total_time = time.perf_counter() - start_all
-    print("\n=== Summary ===")
-    print(f"Images : {len(imgs)}")
-    print(f"Total  : {sec_to_hms(total_time)}")
-    if imgs:
-        print(f"Avg    : {sec_to_hms(total_time / len(imgs))}")
-        print(f"Min    : {sec_to_hms(min(durations))}")
-        print(f"Max    : {sec_to_hms(max(durations))}")
-    sys.exit()
+        for i in range(0, len(imgs), BATCH_SIZE):
+            batch = imgs[i : i + BATCH_SIZE]
+            t0 = time.perf_counter()
+            with contextlib.redirect_stdout(io.StringIO()):
+                _ = omni_parse_json_batch(batch)
+            t1 = time.perf_counter()
+
+            per_img = (t1 - t0) / len(batch)
+            durations.extend([per_img] * len(batch))
+
+            processed += len(batch)
+            elapsed = time.perf_counter() - start_all
+            avg_so_far = sum(durations) / len(durations)
+            eta = max(len(imgs) - processed, 0) * avg_so_far
+            print(
+                f"{processed}/{len(imgs)} {per_img:.3f}s "
+                f"(elapsed {sec_to_hms(elapsed)}, eta {sec_to_hms(eta)})"
+            )
+
+        total_time = time.perf_counter() - start_all
+        print("\n=== Summary ===")
+        print(f"Images : {len(imgs)}")
+        print(f"Total  : {sec_to_hms(total_time)}")
+        if imgs:
+            print(f"Avg    : {sec_to_hms(total_time / len(imgs))}")
+            print(f"Min    : {sec_to_hms(min(durations))}")
+            print(f"Max    : {sec_to_hms(max(durations))}")
+        return True
+    return False
 
 # ───────────────────────────
 # Normal-mode Config & DB deps
@@ -201,7 +213,7 @@ logging.basicConfig(
 engine = create_engine(DB_URL, pool_size=THREADS * 2, max_overflow=0)
 
 # 影像預讀快取，容量與分批大小一致
-PREFETCHER = ImagePrefetcher(size=BATCH_SIZE)
+PREFETCHER: ImagePrefetcher | None = None
 
 # ───────────────────────────
 # Helper functions (unchanged)
@@ -255,6 +267,7 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
         if not local.exists():
             raise FileNotFoundError(local)
 
+        assert PREFETCHER is not None
         _ = PREFETCHER.pop_image(local)
         sha_now = PREFETCHER.get_sha(local)
         if sha_now is None:
@@ -280,6 +293,7 @@ def worker_loop():
         if len(task_queue) < BATCH_SIZE:
             new_rows = claim_tasks(BATCH_SIZE - len(task_queue))
             if new_rows:
+                assert PREFETCHER is not None
                 PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in new_rows)
                 task_queue.extend(new_rows)
 
@@ -314,10 +328,30 @@ def worker_loop():
 # ───────────────────────────
 # Boot
 # ───────────────────────────
-if __name__ == "__main__":
+def main() -> None:
+    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER
+
+    args = _parse_args()
+    DEBUG = args.debug or bool(args.debug_dir)
+    DEBUG_IMG = args.img
+    DEBUG_DIR = args.debug_dir
+    BATCH_SIZE = args.batch_size
+
+    PREFETCHER = ImagePrefetcher(size=BATCH_SIZE)
+
+    _init_model_processes()
+
+    if _run_debug():
+        return
+
     with engine.begin() as conn:
         stats_init(conn)
-    logging.info("Worker started (threads=%d, batch=%d, device=%s)", THREADS, BATCH_SIZE, DEVICE)
+    logging.info(
+        "Worker started (threads=%d, batch=%d, device=%s)",
+        THREADS,
+        BATCH_SIZE,
+        DEVICE,
+    )
     for _ in range(THREADS):
         threading.Thread(target=worker_loop, daemon=True).start()
     try:
@@ -325,5 +359,7 @@ if __name__ == "__main__":
             time.sleep(60)
     except KeyboardInterrupt:
         logging.info("Shutdown – bye")
-    finally:
-        pass
+
+
+if __name__ == "__main__":
+    main()
