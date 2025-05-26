@@ -3,6 +3,10 @@ from pathlib import Path
 from typing import List, Tuple
 from PIL import Image
 
+# Ensure CUDA works with multiprocessing
+if mp.get_start_method(allow_none=True) != "spawn":
+    mp.set_start_method("spawn", force=True)
+
 
 class _BaseProcess(mp.Process):
     def __init__(self):
