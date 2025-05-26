@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OmniParser Worker – DB driven, JSON only  (v15 – debug progress)
+OmniParser Worker – DB driven, JSON only  (v16 – model subprocesses)
 ================================================================
 * v12: 修正 get_yolo_model 無 device 參數
 * v13: 移除 get_som_labeled_img 的 yolo_result
 * v14: 在 --debug-dir 模式新增統計 (count / total / avg / min / max)
 * v15: --debug-dir 執行時改為輸出進度，不列印 JSON 內容
+* v16: 三個模型改為子進程常駐服務
 """
 from __future__ import annotations
 
@@ -26,10 +27,10 @@ os.environ["FLAGS_allocator_strategy"] = "auto_growth"  # GPU 記憶體按需配
 import paddle
 import contextlib
 import io
+import atexit
 
 from util.memory import (
     debug_gpu_memory,
-    release_ocr_gpu_cache,
     maybe_empty_gpu_cache,
 )
 
@@ -55,36 +56,28 @@ BATCH_SIZE = args.batch_size
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
-from OmniParser.util.utils import (
-    check_ocr_box,
-    get_caption_model_processor,
-    get_som_labeled_img,
-    get_yolo_model,
-    _get_paddle_ocr,
-)
+from OmniParser.util.utils import get_som_labeled_img
+from util.model_service import YoloWorker, OCRWorker
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-yolo_model = get_yolo_model("weights/icon_detect/model.pt", device=DEVICE)
-caption_model_processor = get_caption_model_processor(
-    model_name="florence2",
-    model_name_or_path="weights/icon_caption_florence",
-    device=DEVICE,
-)
+# 子進程常駐三個模型
+yolo_proc = YoloWorker("weights/icon_detect/model.pt", device=DEVICE)
+ocr_proc = OCRWorker(use_gpu=(DEVICE == "cuda"))
+for p in (yolo_proc, ocr_proc):
+    p.start()
 
-# PaddleOCR 單例，避免重複初始化
-PADDLE_OCR = _get_paddle_ocr(use_gpu=(DEVICE == "cuda"))
+def _shutdown_processes():
+    for p in (yolo_proc, ocr_proc):
+        p.shutdown()
+
+atexit.register(_shutdown_processes)
 
 
-def _queue_ocr(img, use_paddleocr=True):
-    """直接呼叫 OCR，保持相容先前介面"""
-    result = check_ocr_box(
-        img,
-        output_bb_format="xyxy",
-        use_paddleocr=use_paddleocr,
-        paddle_ocr=PADDLE_OCR if use_paddleocr else None,
-        easyocr_args={"paragraph": False, "text_threshold": 0.9},
-    )
+def _queue_ocr(path, use_paddleocr=True):
+    """透過子進程執行 OCR"""
+    ocr_proc.in_q.put((0, str(path)))
+    _idx, result = ocr_proc.out_q.get()
     return result
 
 # ───────────────────────────
@@ -92,75 +85,36 @@ def _queue_ocr(img, use_paddleocr=True):
 # ───────────────────────────
 @torch.inference_mode()
 def omni_parse_json_single(
-    image_path: Path | Image.Image,
+    image_path: Path | str,
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
-    use_paddleocr: bool = True,
     imgsz: int = 640,
 ):
-    if isinstance(image_path, Image.Image):
-        img = image_path.convert("RGB")
-    else:
-        img = Image.open(image_path).convert("RGB")
-    (ocr_text, ocr_bbox), _ = _queue_ocr(img, use_paddleocr)
-    _, _, parsed = get_som_labeled_img(
-        img,
-        yolo_model,
-        BOX_TRESHOLD=box_threshold,
-        output_coord_in_ratio=True,
-        ocr_bbox=ocr_bbox,
-        caption_model_processor=caption_model_processor,
-        ocr_text=ocr_text,
-        iou_threshold=iou_threshold,
-        imgsz=imgsz,
-    )
-    return [i.get("content", "") for i in parsed if i.get("content")]
+    return omni_parse_json_batch([Path(image_path)], box_threshold, iou_threshold, imgsz=imgsz)[0]
 
 
 @torch.inference_mode()
 def omni_parse_json_batch(
-    image_paths: List[Path | Image.Image],
+    image_paths: List[Path | str],
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
-    use_paddleocr: bool = True,
     imgsz: int = 640,
 ) -> List[List[str]]:
-    imgs = [
-        (p.convert("RGB") if isinstance(p, Image.Image) else Image.open(p).convert("RGB"))
-        for p in image_paths
-    ]
-    _ = yolo_model.predict(imgs, batch=len(imgs), verbose=False)
+    paths = [str(p) for p in image_paths]
+
+    # --- YOLO ---
+    yolo_proc.in_q.put(paths)
+    yolo_results = yolo_proc.out_q.get()
 
     # --- OCR ---
-    ocr_results = [
-        _queue_ocr(img, use_paddleocr)[0]
-        for img in imgs
-    ]
+    for idx, p in enumerate(paths):
+        ocr_proc.in_q.put((idx, p))
+    ocr_results = [None] * len(paths)
+    for _ in paths:
+        idx, res = ocr_proc.out_q.get()
+        ocr_results[idx] = res[0][0]
 
-    outputs: List[List[str]] = []
-    for img, (ocr_text, ocr_bbox) in zip(imgs, ocr_results):
-        _, _, parsed = get_som_labeled_img(
-            img,
-            yolo_model,
-            BOX_TRESHOLD=box_threshold,
-            output_coord_in_ratio=True,
-            ocr_bbox=ocr_bbox,
-            caption_model_processor=caption_model_processor,
-            ocr_text=ocr_text,
-            iou_threshold=iou_threshold,
-            imgsz=imgsz,
-        )
-        outputs.append([i.get("content", "") for i in parsed if i.get("content")])
-
-    # 主動清理未再使用的張量並視需要釋放 GPU 快取
-    del imgs
-    gc.collect()
-    if torch.cuda.is_available():
-        maybe_empty_gpu_cache()
-        release_ocr_gpu_cache(PADDLE_OCR)
-        debug_gpu_memory("omni_parse_json_batch")
-
-    return outputs
+    return ocr_results
 
 
 def sec_to_hms(seconds: float) -> str:
@@ -296,14 +250,14 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
         if not local.exists():
             raise FileNotFoundError(local)
 
-        img = PREFETCHER.pop_image(local)
+        _ = PREFETCHER.pop_image(local)
         sha_now = PREFETCHER.get_sha(local)
         if sha_now is None:
             sha_now = sha256_file(local)
         sha_db = row["sha256_img"] or ""
         if sha_db and sha_db != sha_now:
             raise ValueError("sha256_img mismatch")
-        paths.append(img if img is not None else local)
+        paths.append(local)
         sha_list.append(sha_now)
         cids.append(row["id"])
         db_paths.append(row["img_path"])
