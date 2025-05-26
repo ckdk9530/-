@@ -52,6 +52,13 @@ def _parse_args():
     cli.add_argument("--img", help="單張路徑")
     cli.add_argument("--debug-dir", help="資料夾批量 debug")
     cli.add_argument("--batch-size", type=int, default=8, help="一次 GPU 推論張數")
+    cli.add_argument(
+        "--no-print-text",
+        dest="print_text",
+        action="store_false",
+        help="不在第一批結束後輸出文字列表",
+    )
+    cli.set_defaults(print_text=True)
     return cli.parse_args()
 
 args = None  # type: argparse.Namespace | None
@@ -59,6 +66,7 @@ DEBUG = False
 DEBUG_IMG: str | None = None
 DEBUG_DIR: str | None = None
 BATCH_SIZE = 8
+PRINT_TEXT = True
 
 # ───────────────────────────
 # Model utils
@@ -132,7 +140,9 @@ def omni_parse_json_batch(
 
 
 def sec_to_hms(seconds: float) -> str:
-    """Convert seconds to HH:MM:SS string."""
+    """Convert seconds to HH:MM:SS string; if under one second show ms."""
+    if seconds < 1:
+        return f"{seconds:.3f}s"
     seconds = int(round(seconds))
     h = seconds // 3600
     m = (seconds % 3600) // 60
@@ -151,8 +161,8 @@ def _run_debug():
     if DEBUG_DIR:
         imgs = sorted(
             [p for p in Path(DEBUG_DIR).rglob("*") if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}]
-        )
-        print(f"Total images: {len(imgs)}")
+        )[:5]
+        print(f"Total images (debug first 5): {len(imgs)}")
         start_all = time.perf_counter()
         durations: List[float] = []
         processed = 0
@@ -161,8 +171,15 @@ def _run_debug():
             batch = imgs[i : i + BATCH_SIZE]
             t0 = time.perf_counter()
             with contextlib.redirect_stdout(io.StringIO()):
-                _ = omni_parse_json_batch(batch)
+                results = omni_parse_json_batch(batch)
             t1 = time.perf_counter()
+
+            save_debug_results([Path(p) for p in batch], results)
+
+            if PRINT_TEXT and i == 0:
+                print("First batch text:")
+                for t in results:
+                    print(t)
 
             per_img = (t1 - t0) / len(batch)
             durations.extend([per_img] * len(batch))
@@ -231,6 +248,25 @@ def sha256_file(fp: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
+    """將 debug 模式結果寫入資料庫"""
+    with engine.begin() as conn:
+        for p, txt in zip(paths, texts):
+            conn.execute(
+                _text(
+                    """
+                INSERT INTO captures (img_path, sha256_img, status, json_payload)
+                VALUES (:p, :s, 'done', :j)
+                ON CONFLICT (img_path) DO UPDATE
+                    SET sha256_img = EXCLUDED.sha256_img,
+                        status = 'done',
+                        json_payload = EXCLUDED.json_payload;
+                """
+                ),
+                dict(p=str(p), s=sha256_file(p), j=json.dumps(txt, ensure_ascii=False)),
+            )
 
 # ───────────────────────────
 # worker_stats helpers (unchanged)
@@ -328,7 +364,7 @@ def worker_loop():
 # Boot
 # ───────────────────────────
 def main() -> None:
-    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER
+    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER, PRINT_TEXT
 
     ensure_spawn_start_method()
 
@@ -337,6 +373,7 @@ def main() -> None:
     DEBUG_IMG = args.img
     DEBUG_DIR = args.debug_dir
     BATCH_SIZE = args.batch_size
+    PRINT_TEXT = args.print_text
 
     PREFETCHER = ImagePrefetcher(size=BATCH_SIZE)
 
