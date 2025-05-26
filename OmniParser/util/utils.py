@@ -584,8 +584,18 @@ def check_ocr_box(
         # PaddleOCR 在部分失敗案例會回傳 [None]，導致後續解析出錯
         if result is None or not isinstance(result, list):
             result = []
-        coord = [item[0]      for item in result if item[1][1] >= text_threshold]
-        text  = [item[1][0]   for item in result if item[1][1] >= text_threshold]
+        else:
+            # 過濾無效項目，避免索引錯誤
+            result = [
+                r for r in result
+                if r
+                and isinstance(r, (list, tuple))
+                and len(r) > 1
+                and isinstance(r[1], (list, tuple))
+                and len(r[1]) > 1
+            ]
+        coord = [item[0] for item in result if item[1][1] >= text_threshold]
+        text  = [item[1][0] for item in result if item[1][1] >= text_threshold]
     else:
         import easyocr
         if easyocr_args is None:
