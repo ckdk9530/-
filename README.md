@@ -40,34 +40,30 @@
 
 ```
 .
-├── agents/
-│   └── capture/             # 屏幕抓取客户端
-│       └── screen_capture.py
-├── server/
-│   ├── worker.py            # GPU OCR / LLM 解析
-│   └── omni_parser/...
-├── nas/
-│   ├── sync.py              # 定时將路徑寫入 Postgres
-│   └── docker-compose.yml   # Web‑UI (draft)
-└── webui/ (draft)
-    ├── app/main.py          # FastAPI 入口
-    └── frontend/           # React + Tailwind
+├── amikon_network.py   # 屏幕抓取客戶端
+├── sync.py             # NAS → PostgreSQL 同步
+├── worker_batch.py     # GPU OCR 解析
+├── hb_inotify.py       # RouterOS 心跳監控
+├── util/               # 共用工具模組
+├── webui/              # FastAPI + 靜態頁範例
+├── OmniParser/         # OmniParser 依賴
+└── ...
 ```
 
-### 1. 屏幕抓取客户端 (`agents/capture/screen_capture.py`)
+### 1. 屏幕抓取客户端 (`amikon_network.py`)
 
 * 依赖 `mss`, `Pillow`, `psutil`, `ftplib`。
 * 每 5 秒截取所有显示器，命名为 `screenshot_YYYY-MM-DD_HH-MM-SS_display_N.jpg`，并按 `PCNAME_MAC/YYYY-MM-DD/` 结构上传至 NAS。
 * 本地进程监控 RSS，不超过 500 MB 即自动重启。
 
-### 2. NAS 同步服务 (`nas/sync.py`)
+### 2. NAS 同步服务 (`sync.py`)
 
 * 通过 `sshfs` 或本地挂载读取 `/volume1/screens` 目录差异。
 * 使用 `psycopg2.copy_from()` 将新文件路径批量导入 GPU Workstation 上的 `captures_paths_tmp`。
 * 连接字符串示例：`postgres://omniapp:<pwd>@192.168.1.240:5432/omni`。
 * 在 DSM「计划任务」中以 `python3 /volume1/Server_management/sync.py` 调度，输出记录可在「任务日志」查看。
 
-### 3. GPU Workstation 解析流水 (`server/worker.py`)
+### 3. GPU Workstation 解析流水 (`worker_batch.py`)
 
 1. 轮询数据库中 `status = 'pending'` 的行；
 2. 通过 NFS 挂载访问 NAS 中的 `img_path`；
@@ -75,17 +71,17 @@
 4. 将 `json_payload` 与摘要写回数据库；
 5. 若失败，`status` 标记 `error` 并记录日志。
 
-### 4. Web 前端（草稿）
+### 4. RouterOS 心跳监控 (`hb_inotify.py`)
+
+* 透过 inotify 监视截图目录新增，配合 ARP 与 DHCP 清单更新防火墙名单。
+* 周期性比对未上传截图的 IP，并自动加入阻断列表。
+
+### 5. Web 前端（草稿）
 
 * **后端**：FastAPI，运行在 NAS Docker；提供图像预览、OCR JSON 展示、全文搜索与权限管理 API。
 * **前端**：React + Tailwind + shadcn/ui，可视化图表使用 Recharts。
 * **连接**：通过环境变量 `DATABASE_URL` 直连 GPU Workstation 上的 Postgres。
 * **启动草稿**：`uvicorn webui.app.main:app --reload` ，浏览器打开 `http://localhost:8000/static/index.html` 查看介面。
-
-### 5. AI‑Proxy (`cloudflare/ai-proxy/index.ts`)
-
-* 统一封装对 OpenAI / Deepgram / Anthropic 的调用；支持 SSE 流式返回。
-* 本地调试：`wrangler dev`；生产：`wrangler deploy`。
 
 ## 数据库概要
 
@@ -103,7 +99,7 @@
 # Synology NAS
 # 1. 启动 FTP + 创建 /volume1/screens
 # 2. (可选) 部署 Web‑UI
-cd nas && docker compose up -d   # 未来 webui 容器
+#    uvicorn webui.app.main:app --reload
 
 # GPU Workstation
 sudo apt update && sudo apt install -y python3-venv build-essential postgresql-16 postgresql-contrib
@@ -113,8 +109,8 @@ sudo -u postgres createdb -O omniapp omni
 
 # Python 环境
 python3 -m venv venv && . venv/bin/activate
-pip install -r server/requirements.txt
-python server/worker.py
+pip install -r OmniParser/requirements.txt
+python worker_batch.py
 ```
 
 ## 维护与监控
