@@ -410,8 +410,8 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
             raise FileNotFoundError(local)
 
         assert PREFETCHER is not None
-        _ = PREFETCHER.pop_image(local)
         sha_now = PREFETCHER.get_sha(local)
+        _ = PREFETCHER.pop_image(local)
         if sha_now is None:
             sha_now = sha256_file(local)
         sha_db = row["sha256_img"] or ""
