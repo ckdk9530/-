@@ -29,6 +29,7 @@ import contextlib
 import io
 import atexit
 import multiprocessing as mp
+import uuid
 
 from util.model_service import ensure_spawn_start_method
 
@@ -278,6 +279,7 @@ def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
 # worker_stats helpers (unchanged)
 # ───────────────────────────
 MAC_ADDR = "omni-worker"
+RUN_ID = uuid.uuid4().hex
 
 # ... (stats_* functions 保持原樣) ...
 from sqlalchemy import text as _text
@@ -286,14 +288,14 @@ def stats_init(conn):
     conn.execute(
         _text(
             """
-        INSERT INTO worker_stats (mac_address, processed_ok, processed_err, pending, last_update, current_img)
-        SELECT :m, 0, 0, 0, now(), NULL
+        INSERT INTO worker_stats (mac_address, run_id, processed_ok, processed_err, pending, last_update, current_img)
+        SELECT :m, :r, 0, 0, 0, now(), NULL
         WHERE NOT EXISTS (
             SELECT 1 FROM worker_stats WHERE mac_address = :m
         );
         """
         ),
-        dict(m=MAC_ADDR),
+        dict(m=MAC_ADDR, r=RUN_ID),
     )
 
 # 其餘 stats_*、claim_tasks、update_capture_done、mark_error 與原版一致
