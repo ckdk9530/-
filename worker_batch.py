@@ -301,6 +301,98 @@ def stats_init(conn):
 # 其餘 stats_*、claim_tasks、update_capture_done、mark_error 與原版一致
 # 為節省篇幅，若未顯示請從原檔複製；或確保函式簽名不變。
 
+
+def stats_progress(conn, img_path: str) -> None:
+    """更新當前處理中的圖片路徑"""
+
+    conn.execute(
+        _text(
+            """
+        UPDATE worker_stats
+           SET current_img = :p,
+               last_update = now()
+         WHERE mac_address = :m;
+        """
+        ),
+        dict(p=img_path, m=MAC_ADDR),
+    )
+
+
+def stats_done(conn, ok: int = 0, err: int = 0) -> None:
+    """累積完成數量"""
+
+    conn.execute(
+        _text(
+            """
+        UPDATE worker_stats
+           SET processed_ok  = processed_ok  + :ok,
+               processed_err = processed_err + :err,
+               current_img   = NULL,
+               last_update   = now()
+         WHERE mac_address = :m;
+        """
+        ),
+        dict(ok=ok, err=err, m=MAC_ADDR),
+    )
+
+
+def claim_tasks(n: int) -> list[dict]:
+    """取得待處理任務並預讀圖片"""
+
+    if n <= 0:
+        return []
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            _text(
+                """
+            UPDATE captures SET status = 'processing'
+             WHERE id IN (
+                SELECT id FROM captures
+                 WHERE status = 'pending'
+                 ORDER BY id
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT :n
+             )
+            RETURNING id, img_path, sha256_img;
+            """
+            ),
+            dict(n=n),
+        ).mappings().all()
+
+    tasks = [dict(r) for r in rows]
+
+    if tasks and PREFETCHER is not None:
+        PREFETCHER.prefetch(db_to_local(t["img_path"]) for t in tasks)
+
+    return tasks
+
+
+def update_capture_done(conn, cid: int, json_payload: str, sha_now: str) -> None:
+    """將解析結果寫回資料庫"""
+
+    conn.execute(
+        _text(
+            """
+        UPDATE captures
+           SET status      = 'done',
+               sha256_img  = :s,
+               json_payload = :j
+         WHERE id = :cid;
+        """
+        ),
+        dict(cid=cid, j=json_payload, s=sha_now),
+    )
+
+
+def mark_error(conn, cid: int) -> None:
+    """標記任務為錯誤"""
+
+    conn.execute(
+        _text("UPDATE captures SET status = 'error' WHERE id = :cid"),
+        dict(cid=cid),
+    )
+
 # ───────────────────────────
 # Worker thread – batch version
 # ───────────────────────────
@@ -343,8 +435,6 @@ def worker_loop():
         if len(task_queue) < BATCH_SIZE:
             new_rows = claim_tasks(BATCH_SIZE - len(task_queue))
             if new_rows:
-                assert PREFETCHER is not None
-                PREFETCHER.prefetch(db_to_local(r["img_path"]) for r in new_rows)
                 task_queue.extend(new_rows)
 
         if len(task_queue) < BATCH_SIZE:
