@@ -15,6 +15,7 @@ from time import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
+import hashlib
 
 # ─── 常量 ─────────────────────────────────────────
 ROOT_DIR   = Path("/volume1/ScreenshotService")
@@ -37,7 +38,11 @@ LOCAL_TZ     = 'Asia/Shanghai'
 CHUNK        = 100_000        # 每批 10 萬筆 COPY + COMMIT
 
 # ─── 雜湊計算 ─────────────────────────────────────
-from util.hash_utils import sha256_file
+def sha256_file(data: bytes) -> str:
+    """回傳影像資料的 SHA-256 雜湊值"""
+    h = hashlib.sha256()
+    h.update(data)
+    return h.hexdigest()
 
 # ─── 掃盤 ─────────────────────────────────────────
 
