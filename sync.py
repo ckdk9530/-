@@ -36,10 +36,14 @@ MAX_WORKERS  = 10             # 建議值：CPU×2
 LOCAL_TZ     = 'Asia/Shanghai'
 CHUNK        = 100_000        # 每批 10 萬筆 COPY + COMMIT
 
+# ─── 雜湊計算 ─────────────────────────────────────
+from util.hash_utils import sha256_file
+
 # ─── 掃盤 ─────────────────────────────────────────
 
-def _collect_paths_for_pc(pc_dir: Path, min_date: date) -> list[str]:
-    lst: list[str] = []
+def _collect_paths_for_pc(pc_dir: Path, min_date: date) -> list[tuple[str, str]]:
+    """回傳指定電腦目錄下待同步檔案與其 SHA-256"""
+    lst: list[tuple[str, str]] = []
     for date_dir in pc_dir.iterdir():
         if (not date_dir.is_dir()) or (not DATE_RE.fullmatch(date_dir.name)):
             continue
@@ -48,7 +52,7 @@ def _collect_paths_for_pc(pc_dir: Path, min_date: date) -> list[str]:
             continue
         for img in date_dir.iterdir():
             if img.is_file() and img.suffix.lower() in IMG_SUFFIXES:
-                lst.append(str(img))
+                lst.append((str(img), sha256_file(img)))
     return lst
 
 def scan_to_temp(tmp_file: io.TextIOBase, min_date: date) -> int:
@@ -57,8 +61,8 @@ def scan_to_temp(tmp_file: io.TextIOBase, min_date: date) -> int:
         pc_dirs = [d for d in ROOT_DIR.iterdir() if d.is_dir() and MAC_RE.fullmatch(d.name)]
         futures = [exe.submit(_collect_paths_for_pc, d, min_date) for d in pc_dirs]
         for fut in as_completed(futures):
-            for p in fut.result():
-                tmp_file.write(p + "\n"); total += 1
+            for p, sha in fut.result():
+                tmp_file.write(f"{p}\t{sha}\n"); total += 1
     tmp_file.flush(); return total
 
 # ─── 同步流程 ─────────────────────────────────────
@@ -86,7 +90,9 @@ def run_sync() -> None:
     engine = create_engine(DB_URL, pool_size=POOL_SIZE, max_overflow=0, pool_pre_ping=True)
     conn = engine.raw_connection(); cur = conn.cursor()
     try:
-        cur.execute(f"CREATE UNLOGGED TABLE IF NOT EXISTS {TMP_TABLE} (img_path text PRIMARY KEY);")
+        cur.execute(
+            f"CREATE UNLOGGED TABLE IF NOT EXISTS {TMP_TABLE} (img_path text PRIMARY KEY, sha256 text);"
+        )
         cur.execute(f"TRUNCATE {TMP_TABLE};")
         cur.execute("SET LOCAL synchronous_commit = off;")
 
@@ -97,7 +103,7 @@ def run_sync() -> None:
                 buf_lines = [l for l in buf_lines if l]
                 if not buf_lines:
                     break
-                cur.copy_from(io.StringIO(''.join(buf_lines)), TMP_TABLE, columns=("img_path",))
+                cur.copy_from(io.StringIO(''.join(buf_lines)), TMP_TABLE, columns=("img_path", "sha256"))
                 conn.commit()
         print("[COPY] 完成")
 
@@ -114,7 +120,7 @@ def run_sync() -> None:
                    lower(right(split_part(img_path,'/',4), 12)),
                    split_part(split_part(img_path, '_display_', 2), '.', 1)::int,
                    img_path,
-                   md5(img_path),
+                   sha256,
                    'pending',
                    to_timestamp(regexp_replace(img_path,
                        '^.*screenshot_(\\d{{4}}-\\d{{2}}-\\d{{2}})_(\\d{{2}})-(\\d{{2}})-(\\d{{2}})_display_\\d+.*$',
