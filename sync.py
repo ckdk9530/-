@@ -52,7 +52,7 @@ def _collect_paths_for_pc(pc_dir: Path, min_date: date) -> list[tuple[str, str]]
             continue
         for img in date_dir.iterdir():
             if img.is_file() and img.suffix.lower() in IMG_SUFFIXES:
-                lst.append((str(img), sha256_file(img)))
+                lst.append((str(img), sha256_file(img.read_bytes())))
     return lst
 
 def scan_to_temp(tmp_file: io.TextIOBase, min_date: date) -> int:

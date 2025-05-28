@@ -264,7 +264,7 @@ def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
                         json_payload = EXCLUDED.json_payload;
                 """
                 ),
-                dict(p=str(p), s=sha256_file(p), j=json.dumps(txt, ensure_ascii=False)),
+                dict(p=str(p), s=sha256_file(p.read_bytes()), j=json.dumps(txt, ensure_ascii=False)),
             )
 
 # ───────────────────────────
@@ -405,7 +405,7 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
         sha_now = PREFETCHER.get_sha(local)
         _ = PREFETCHER.pop_image(local)
         if sha_now is None:
-            sha_now = sha256_file(local)
+            sha_now = sha256_file(local.read_bytes())
         sha_db = row["sha256_img"] or ""
         if sha_db and sha_db != sha_now:
             raise ValueError("sha256_img mismatch")
