@@ -4,7 +4,7 @@
 OmniParser – Incremental Sync (staging + per‑PC multithread + 120‑day retention)
 ==============================================================================
 • 查最新拍攝日 → AUTOCOMMIT 短連線。
-• 主流程：COPY → INSERT (ON CONFLICT DO NOTHING) → DELETE → PURGE >120d。
+• 主流程：COPY → INSERT (檢查 sha256_img 不一致即更新) → DELETE → PURGE >120d。
 • 啟用 `SET LOCAL synchronous_commit = off` 降低 WAL flush；COPY/INSERT 分批 commit (CHUNK=100k)。
 """
 from __future__ import annotations
@@ -110,7 +110,7 @@ def run_sync() -> None:
         # 唯一索引
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS captures_img_path_uniq ON captures(img_path);")
 
-        # INSERT (ON CONFLICT)
+        # INSERT 或更新 sha256_img
         cur.execute(f"""
             INSERT INTO captures (
                 timestamp, computer_name, mac_address, monitor_no,
@@ -126,7 +126,10 @@ def run_sync() -> None:
                        '^.*screenshot_(\\d{{4}}-\\d{{2}}-\\d{{2}})_(\\d{{2}})-(\\d{{2}})-(\\d{{2}})_display_\\d+.*$',
                        '\\1 \\2:\\3:\\4'), 'YYYY-MM-DD HH24:MI:SS')
               FROM {TMP_TABLE}
-            ON CONFLICT (img_path) DO NOTHING;""")
+            ON CONFLICT (img_path) DO UPDATE
+                SET sha256_img = EXCLUDED.sha256_img,
+                    status     = 'pending'
+            WHERE captures.sha256_img IS DISTINCT FROM EXCLUDED.sha256_img;""")
         print(f"[INSERT] +{cur.rowcount:,}")
 
         # DELETE vanished
