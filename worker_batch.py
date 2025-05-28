@@ -12,7 +12,6 @@ OmniParser Worker – DB driven, JSON only  (v16 – model subprocesses)
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import sys
@@ -43,6 +42,7 @@ import torch
 import gc
 from PIL import Image
 from util.prefetch import ImagePrefetcher
+from util.hash_utils import sha256_file
 
 # ───────────────────────────
 # CLI
@@ -247,14 +247,6 @@ def db_to_local(p: str | Path) -> Path:
         return LOCAL_PREFIX / p.relative_to(DB_PREFIX)
     except ValueError:
         return p
-
-def sha256_file(fp: Path) -> str:
-    h = hashlib.sha256()
-    with fp.open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
 
 def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
     """將 debug 模式結果寫入資料庫"""

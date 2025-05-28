@@ -8,7 +8,7 @@ OmniParser – Incremental Sync (staging + per‑PC multithread + 120‑day rete
 • 啟用 `SET LOCAL synchronous_commit = off` 降低 WAL flush；COPY/INSERT 分批 commit (CHUNK=100k)。
 """
 from __future__ import annotations
-import re, io, tempfile, os, hashlib
+import re, io, tempfile, os
 from pathlib import Path
 from datetime import datetime, timedelta, date
 from time import time
@@ -37,14 +37,7 @@ LOCAL_TZ     = 'Asia/Shanghai'
 CHUNK        = 100_000        # 每批 10 萬筆 COPY + COMMIT
 
 # ─── 雜湊計算 ─────────────────────────────────────
-
-def sha256_file(fp: Path) -> str:
-    """回傳檔案內容的 SHA-256 雜湊值"""
-    h = hashlib.sha256()
-    with fp.open("rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
+from util.hash_utils import sha256_file
 
 # ─── 掃盤 ─────────────────────────────────────────
 
