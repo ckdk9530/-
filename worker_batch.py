@@ -59,6 +59,11 @@ def _parse_args():
         action="store_false",
         help="不在第一批結束後輸出文字列表",
     )
+    cli.add_argument(
+        "--skip-sha256-check",
+        action="store_true",
+        help="跳過 sha256 檢查",
+    )
     cli.set_defaults(print_text=True)
     return cli.parse_args()
 
@@ -68,6 +73,7 @@ DEBUG_IMG: str | None = None
 DEBUG_DIR: str | None = None
 BATCH_SIZE = 8
 PRINT_TEXT = True
+SKIP_SHA256_CHECK = False
 
 # ───────────────────────────
 # Model utils
@@ -408,7 +414,10 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
             sha_now = sha256_file(local.read_bytes())
         sha_db = row["sha256_img"] or ""
         if sha_db and sha_db != sha_now:
-            raise ValueError("sha256_img mismatch")
+            if SKIP_SHA256_CHECK:
+                logging.warning("skip sha256 mismatch: %s", row["img_path"])
+            else:
+                raise ValueError("sha256_img mismatch")
         paths.append(local)
         sha_list.append(sha_now)
         cids.append(row["id"])
@@ -461,7 +470,7 @@ def worker_loop():
 # Boot
 # ───────────────────────────
 def main() -> None:
-    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER, PRINT_TEXT
+    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER, PRINT_TEXT, SKIP_SHA256_CHECK
 
     ensure_spawn_start_method()
 
@@ -471,6 +480,7 @@ def main() -> None:
     DEBUG_DIR = args.debug_dir
     BATCH_SIZE = args.batch_size
     PRINT_TEXT = args.print_text
+    SKIP_SHA256_CHECK = args.skip_sha256_check
 
     PREFETCHER = ImagePrefetcher(size=BATCH_SIZE)
 
