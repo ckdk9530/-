@@ -38,7 +38,6 @@ from util.memory import (
 import torch
 import gc
 from util.prefetch import ImagePrefetcher
-from util.hash_utils import sha256_file
 
 # ───────────────────────────
 # CLI
@@ -54,11 +53,6 @@ def _parse_args():
         action="store_false",
         help="不在第一批結束後輸出文字列表",
     )
-    cli.add_argument(
-        "--skip-sha256-check",
-        action="store_true",
-        help="跳過 sha256 檢查與寫入",
-    )
     cli.set_defaults(print_text=True)
     return cli.parse_args()
 
@@ -67,7 +61,7 @@ DEBUG = False
 DEBUG_IMG: str | None = None
 DEBUG_DIR: str | None = None
 PRINT_TEXT = True
-SKIP_SHA256_CHECK = False
+
 
 # ───────────────────────────
 # Model utils
@@ -249,33 +243,18 @@ def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
 
     with engine.begin() as conn:
         for p, txt in zip(paths, texts):
-            if SKIP_SHA256_CHECK:
-                conn.execute(
-                    _text(
-                        """
-                    INSERT INTO captures (timestamp, img_path, status, json_payload)
-                    VALUES (now(), :p, 'done', :j)
-                    ON CONFLICT (img_path) DO UPDATE
-                        SET status = 'done',
-                            json_payload = EXCLUDED.json_payload;
+            conn.execute(
+                _text(
                     """
-                    ),
-                    dict(p=str(p), j=json.dumps(txt, ensure_ascii=False)),
-                )
-            else:
-                conn.execute(
-                    _text(
-                        """
-                    INSERT INTO captures (timestamp, img_path, sha256_img, status, json_payload)
-                    VALUES (now(), :p, :s, 'done', :j)
-                    ON CONFLICT (img_path) DO UPDATE
-                        SET sha256_img = EXCLUDED.sha256_img,
-                            status = 'done',
-                            json_payload = EXCLUDED.json_payload;
-                    """
-                    ),
-                    dict(p=str(p), s=sha256_file(p.read_bytes()), j=json.dumps(txt, ensure_ascii=False)),
-                )
+                INSERT INTO captures (timestamp, img_path, status, json_payload)
+                VALUES (now(), :p, 'done', :j)
+                ON CONFLICT (img_path) DO UPDATE
+                    SET status = 'done',
+                        json_payload = EXCLUDED.json_payload;
+                """
+                ),
+                dict(p=str(p), j=json.dumps(txt, ensure_ascii=False)),
+            )
 
 # ───────────────────────────
 # worker_stats helpers (unchanged)
@@ -356,7 +335,7 @@ def claim_tasks(n: int) -> list[dict]:
                  FOR UPDATE SKIP LOCKED
                  LIMIT :n
              )
-            RETURNING id, img_path, sha256_img;
+            RETURNING id, img_path;
             """
             ),
             dict(n=n),
@@ -370,34 +349,20 @@ def claim_tasks(n: int) -> list[dict]:
     return tasks
 
 
-def update_capture_done(conn, cid: int, json_payload: str, sha_now: str | None) -> None:
+def update_capture_done(conn, cid: int, json_payload: str) -> None:
     """將解析結果寫回資料庫"""
 
-    if sha_now is None:
-        conn.execute(
-            _text(
-                """
-            UPDATE captures
-               SET status      = 'done',
-                   json_payload = :j
-             WHERE id = :cid;
+    conn.execute(
+        _text(
             """
-            ),
-            dict(cid=cid, j=json_payload),
-        )
-    else:
-        conn.execute(
-            _text(
-                """
-            UPDATE captures
-               SET status      = 'done',
-                   sha256_img  = :s,
-                   json_payload = :j
-             WHERE id = :cid;
-            """
-            ),
-            dict(cid=cid, j=json_payload, s=sha_now),
-        )
+        UPDATE captures
+           SET status      = 'done',
+               json_payload = :j
+         WHERE id = :cid;
+        """
+        ),
+        dict(cid=cid, j=json_payload),
+    )
 
 
 def mark_error(conn, cid: int) -> None:

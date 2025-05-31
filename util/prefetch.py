@@ -4,8 +4,7 @@ from collections import deque
 import threading
 import os
 from pathlib import Path
-from typing import Dict, Iterable, Tuple, Optional
-import hashlib
+from typing import Dict, Iterable, Optional
 import io
 
 from PIL import Image
@@ -14,7 +13,7 @@ from PIL import Image
 class ImagePrefetcher:
     """簡單的影像預讀快取，預設保留 5 張。"""
 
-    def __init__(self, size: int = 5, workers: int | None = None, *, calc_sha: bool = True) -> None:
+    def __init__(self, size: int = 5, workers: int | None = None) -> None:
         self.size = size
         self.calc_sha = calc_sha
         self._cache: Dict[Path, Tuple[bytes, Optional[str]]] = {}
@@ -34,8 +33,7 @@ class ImagePrefetcher:
         def _load(path: Path):
             try:
                 data = path.read_bytes()
-                sha = hashlib.sha256(data).hexdigest() if self.calc_sha else None
-                return path, data, sha
+                return path, data
             except Exception:
                 return None
 
@@ -60,11 +58,5 @@ class ImagePrefetcher:
             if entry is None:
                 return None
             self._order.remove(path)
-        data, _sha = entry
+        data = entry
         return Image.open(io.BytesIO(data)).convert("RGB")
-
-    def get_sha(self, p: Path | str) -> Optional[str]:
-        path = Path(p)
-        with self._lock:
-            entry = self._cache.get(path)
-            return entry[1] if entry else None
