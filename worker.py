@@ -66,18 +66,27 @@ PRINT_TEXT = True
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
-from OmniParser.util.utils import get_som_labeled_img
+from OmniParser.util.utils import (
+    get_som_labeled_img,
+    get_caption_model_processor,
+)
 from util.model_service import YoloWorker, OCRWorker
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 yolo_proc: YoloWorker | None = None
 ocr_proc: OCRWorker | None = None
+caption_model_processor = None
 
 def _init_model_processes():
-    global yolo_proc, ocr_proc
+    global yolo_proc, ocr_proc, caption_model_processor
     yolo_proc = YoloWorker("weights/icon_detect/model.pt", device=DEVICE)
     ocr_proc = OCRWorker(use_gpu=(DEVICE == "cuda"))
+    caption_model_processor = get_caption_model_processor(
+        model_name="florence2",
+        model_name_or_path="weights/icon_caption_florence",
+        device=DEVICE,
+    )
     for p in (yolo_proc, ocr_proc):
         p.start()
     atexit.register(_shutdown_processes)
@@ -114,7 +123,7 @@ def omni_parse_json_batch(
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
     imgsz: int = 640,
-) -> List[List[str]]:
+) -> List[List[dict]]:
     paths = [str(p) for p in image_paths]
 
     # --- YOLO ---
@@ -129,9 +138,24 @@ def omni_parse_json_batch(
     ocr_results = [None] * len(paths)
     for _ in paths:
         idx, res = ocr_proc.out_q.get()
-        ocr_results[idx] = res[0][0]
+        ocr_results[idx] = res[0]
 
-    return ocr_results
+    outputs: List[List[dict]] = []
+    for path, yolo_res, (ocr_text, ocr_bbox) in zip(paths, yolo_results, ocr_results):
+        _, _coords, parsed = get_som_labeled_img(
+            path,
+            BOX_TRESHOLD=box_threshold,
+            output_coord_in_ratio=True,
+            ocr_bbox=ocr_bbox,
+            caption_model_processor=caption_model_processor,
+            ocr_text=ocr_text,
+            iou_threshold=iou_threshold,
+            imgsz=imgsz,
+            yolo_result=yolo_res,
+        )
+        outputs.append(parsed)
+
+    return outputs
 
 
 def sec_to_hms(seconds: float) -> str:
@@ -377,7 +401,7 @@ def mark_error(conn, cid: int) -> None:
 # Worker thread – batch version
 # ───────────────────────────
 
-def handle_row(row) -> Tuple[int, str, str | None, List[str]]:
+def handle_row(row) -> Tuple[int, str, List[dict]]:
     """檢查雜湊並解析單張圖片"""
     local = db_to_local(row["img_path"])
     if not local.exists():
@@ -397,7 +421,7 @@ def handle_row(row) -> Tuple[int, str, str | None, List[str]]:
         _ = PREFETCHER.pop_image(local)
 
     parsed = omni_parse_json_single(local)
-    return row["id"], row["img_path"], sha_now, parsed
+    return row["id"], row["img_path"], parsed
 
 
 def worker_loop():
@@ -412,8 +436,8 @@ def worker_loop():
                 stats_progress(conn, row["img_path"])
             info = handle_row(row)
             with engine.begin() as conn:
-                cid, _db_p, sha_now, parsed = info
-                update_capture_done(conn, cid, json.dumps(parsed, ensure_ascii=False), sha_now)
+                cid, _db_p, parsed = info
+                update_capture_done(conn, cid, json.dumps(parsed, ensure_ascii=False))
                 stats_done(conn, ok=1)
             logging.info("DONE id=%s", info[0])
         except Exception:

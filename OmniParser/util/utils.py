@@ -665,3 +665,104 @@ def check_ocr_box(
         plt.show()
 
     return (text, bboxes), goal_filtering
+
+def get_som_parsed_json(
+    image_source: Union[str, Image.Image],
+    model=None,
+    BOX_TRESHOLD=0.01,
+    ocr_bbox=None,
+    caption_model_processor=None,
+    ocr_text=None,
+    use_local_semantics=True,
+    iou_threshold=0.9,
+    prompt=None,
+    scale_img=False,
+    imgsz=None,
+    batch_size=128,
+    *,
+    yolo_result=None,
+):
+    """Return parsed screen elements without drawing bounding boxes."""
+    if ocr_text is None:
+        ocr_text = []
+    if isinstance(image_source, str):
+        image_source = Image.open(image_source)
+    image_source = image_source.convert("RGB")
+    w, h = image_source.size
+    if not imgsz:
+        imgsz = (h, w)
+    if yolo_result is None:
+        xyxy, _logits, _phrases = predict_yolo(
+            model=model,
+            image=image_source,
+            box_threshold=BOX_TRESHOLD,
+            imgsz=imgsz,
+            scale_img=scale_img,
+            iou_threshold=0.1,
+        )
+    else:
+        xyxy, _logits, _phrases = yolo_result
+    xyxy = xyxy / torch.Tensor([w, h, w, h]).to(xyxy.device)
+    image_np = np.asarray(image_source)
+
+    if ocr_bbox:
+        ocr_bbox = torch.tensor(ocr_bbox) / torch.Tensor([w, h, w, h])
+        ocr_bbox = ocr_bbox.tolist()
+    else:
+        ocr_bbox = []
+
+    ocr_bbox_elem = [
+        {
+            'type': 'text',
+            'bbox': box,
+            'interactivity': False,
+            'content': txt,
+            'source': 'box_ocr_content_ocr'
+        }
+        for box, txt in zip(ocr_bbox, ocr_text)
+        if int_box_area(box, w, h) > 0
+    ]
+    xyxy_elem = [
+        {'type': 'icon', 'bbox': box, 'interactivity': True, 'content': None}
+        for box in xyxy.tolist() if int_box_area(box, w, h) > 0
+    ]
+    filtered_boxes = remove_overlap_new(
+        boxes=xyxy_elem, iou_threshold=iou_threshold, ocr_bbox=ocr_bbox_elem
+    )
+
+    filtered_boxes_elem = sorted(filtered_boxes, key=lambda x: x['content'] is None)
+    starting_idx = next((i for i, box in enumerate(filtered_boxes_elem) if box['content'] is None), -1)
+    filtered_boxes_tensor = torch.tensor([box['bbox'] for box in filtered_boxes_elem])
+
+    if use_local_semantics:
+        caption_model = caption_model_processor['model']
+        if 'phi3_v' in caption_model.config.model_type:
+            parsed_content_icon = get_parsed_content_icon_phi3v(
+                filtered_boxes_tensor,
+                ocr_bbox,
+                image_np,
+                caption_model_processor,
+            )
+        else:
+            parsed_content_icon = get_parsed_content_icon(
+                filtered_boxes_tensor,
+                starting_idx,
+                image_np,
+                caption_model_processor,
+                prompt=prompt,
+                batch_size=batch_size,
+            )
+        ocr_text = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)]
+        icon_start = len(ocr_text)
+        for box in filtered_boxes_elem:
+            if box['content'] is None and parsed_content_icon:
+                box['content'] = parsed_content_icon.pop(0)
+        parsed_icon_ls = [
+            f"Icon Box ID {i + icon_start}: {txt}"
+            for i, txt in enumerate(parsed_content_icon)
+        ]
+        parsed_content_merged = ocr_text + parsed_icon_ls
+    else:
+        parsed_content_merged = [f"Text Box ID {i}: {txt}" for i, txt in enumerate(ocr_text)]
+
+    return parsed_content_merged
