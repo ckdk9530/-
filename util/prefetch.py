@@ -5,8 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import os
 from pathlib import Path
-from typing import Dict, Iterable, Tuple, Optional
-import hashlib
+from typing import Dict, Iterable, Optional
 import io
 
 from PIL import Image
@@ -15,11 +14,10 @@ from PIL import Image
 class ImagePrefetcher:
     """簡單的影像預讀快取，預設保留 5 張。"""
 
-    def __init__(self, size: int = 5, workers: int | None = None, *, calc_sha: bool = True) -> None:
+    def __init__(self, size: int = 5, workers: int | None = None) -> None:
         self.size = size
         self.workers = workers or min(4, os.cpu_count() or 1)
-        self.calc_sha = calc_sha
-        self._cache: Dict[Path, Tuple[bytes, Optional[str]]] = {}
+        self._cache: Dict[Path, bytes] = {}
         self._order: deque[Path] = deque()
         self._lock = threading.Lock()
 
@@ -36,8 +34,7 @@ class ImagePrefetcher:
         def _load(path: Path):
             try:
                 data = path.read_bytes()
-                sha = hashlib.sha256(data).hexdigest() if self.calc_sha else None
-                return path, data, sha
+                return path, data
             except Exception:
                 return None
 
@@ -45,14 +42,14 @@ class ImagePrefetcher:
             for result in exe.map(_load, targets):
                 if result is None:
                     continue
-                path, data, sha = result
+                path, data = result
                 with self._lock:
                     if path in self._cache:
                         continue
                     if len(self._order) >= self.size:
                         old = self._order.popleft()
                         self._cache.pop(old, None)
-                    self._cache[path] = (data, sha)
+                    self._cache[path] = data
                     self._order.append(path)
 
     def pop_image(self, p: Path | str) -> Optional[Image.Image]:
@@ -63,11 +60,5 @@ class ImagePrefetcher:
             if entry is None:
                 return None
             self._order.remove(path)
-        data, _sha = entry
+        data = entry
         return Image.open(io.BytesIO(data)).convert("RGB")
-
-    def get_sha(self, p: Path | str) -> Optional[str]:
-        path = Path(p)
-        with self._lock:
-            entry = self._cache.get(path)
-            return entry[1] if entry else None
