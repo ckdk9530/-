@@ -508,6 +508,10 @@ def get_som_labeled_img(
     # get the index of the first 'content': None
     starting_idx = next((i for i, box in enumerate(filtered_boxes_elem) if box['content'] is None), -1)
     filtered_boxes = torch.tensor([box['bbox'] for box in filtered_boxes_elem])
+    if filtered_boxes.numel() == 0:
+        filtered_boxes = filtered_boxes.new_zeros((0, 4))
+    else:
+        filtered_boxes = filtered_boxes.view(-1, 4)
     print('len(filtered_boxes):', len(filtered_boxes), starting_idx)
 
     # get parsed icon local semantics
@@ -533,7 +537,8 @@ def get_som_labeled_img(
         parsed_content_merged = ocr_text
     print('time to get parsed content:', time.time()-time1)
 
-    filtered_boxes = box_convert(boxes=filtered_boxes, in_fmt="xyxy", out_fmt="cxcywh")
+    if filtered_boxes.numel() > 0:
+        filtered_boxes = box_convert(boxes=filtered_boxes, in_fmt="xyxy", out_fmt="cxcywh")
 
     phrases = [i for i in range(len(filtered_boxes))]
     
@@ -733,6 +738,10 @@ def get_som_parsed_json(
     filtered_boxes_elem = sorted(filtered_boxes, key=lambda x: x['content'] is None)
     starting_idx = next((i for i, box in enumerate(filtered_boxes_elem) if box['content'] is None), -1)
     filtered_boxes_tensor = torch.tensor([box['bbox'] for box in filtered_boxes_elem])
+    if filtered_boxes_tensor.numel() == 0:
+        filtered_boxes_tensor = filtered_boxes_tensor.new_zeros((0, 4))
+    else:
+        filtered_boxes_tensor = filtered_boxes_tensor.view(-1, 4)
 
     if use_local_semantics:
         caption_model = caption_model_processor['model']
