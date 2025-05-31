@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 import threading
 import os
 from pathlib import Path
@@ -16,8 +15,8 @@ class ImagePrefetcher:
 
     def __init__(self, size: int = 5, workers: int | None = None) -> None:
         self.size = size
-        self.workers = workers or min(4, os.cpu_count() or 1)
-        self._cache: Dict[Path, bytes] = {}
+        self.calc_sha = calc_sha
+        self._cache: Dict[Path, Tuple[bytes, Optional[str]]] = {}
         self._order: deque[Path] = deque()
         self._lock = threading.Lock()
 
@@ -38,19 +37,18 @@ class ImagePrefetcher:
             except Exception:
                 return None
 
-        with ThreadPoolExecutor(max_workers=self.workers) as exe:
-            for result in exe.map(_load, targets):
-                if result is None:
+        for result in map(_load, targets):
+            if result is None:
+                continue
+            path, data, sha = result
+            with self._lock:
+                if path in self._cache:
                     continue
-                path, data = result
-                with self._lock:
-                    if path in self._cache:
-                        continue
-                    if len(self._order) >= self.size:
-                        old = self._order.popleft()
-                        self._cache.pop(old, None)
-                    self._cache[path] = data
-                    self._order.append(path)
+                if len(self._order) >= self.size:
+                    old = self._order.popleft()
+                    self._cache.pop(old, None)
+                self._cache[path] = (data, sha)
+                self._order.append(path)
 
     def pop_image(self, p: Path | str) -> Optional[Image.Image]:
         """取得並移除快取中的圖片，如不存在則回傳 None"""
