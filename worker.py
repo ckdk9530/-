@@ -68,7 +68,6 @@ PRINT_TEXT = True
 # ───────────────────────────
 from OmniParser.util.utils import (
     get_som_labeled_img,
-    get_som_parsed_json,
     get_caption_model_processor,
 )
 from util.model_service import YoloWorker, OCRWorker
@@ -124,7 +123,7 @@ def omni_parse_json_batch(
     box_threshold: float = 0.05,
     iou_threshold: float = 0.10,
     imgsz: int = 640,
-) -> List[List[str]]:
+) -> List[List[dict]]:
     paths = [str(p) for p in image_paths]
 
     # --- YOLO ---
@@ -141,11 +140,12 @@ def omni_parse_json_batch(
         idx, res = ocr_proc.out_q.get()
         ocr_results[idx] = res[0]
 
-    outputs: List[List[str]] = []
+    outputs: List[List[dict]] = []
     for path, yolo_res, (ocr_text, ocr_bbox) in zip(paths, yolo_results, ocr_results):
-        parsed = get_som_parsed_json(
+        _, _coords, parsed = get_som_labeled_img(
             path,
             BOX_TRESHOLD=box_threshold,
+            output_coord_in_ratio=True,
             ocr_bbox=ocr_bbox,
             caption_model_processor=caption_model_processor,
             ocr_text=ocr_text,
@@ -401,15 +401,24 @@ def mark_error(conn, cid: int) -> None:
 # Worker thread – batch version
 # ───────────────────────────
 
-def handle_row(row) -> Tuple[int, str, List[str]]:
-    """解析單張圖片"""
+def handle_row(row) -> Tuple[int, str, List[dict]]:
+    """檢查雜湊並解析單張圖片"""
     local = db_to_local(row["img_path"])
     if not local.exists():
         raise FileNotFoundError(local)
 
     assert PREFETCHER is not None
-
-    _ = PREFETCHER.pop_image(local)
+    sha_now: str | None = None
+    if not SKIP_SHA256_CHECK:
+        sha_now = PREFETCHER.get_sha(local)
+        _ = PREFETCHER.pop_image(local)
+        if sha_now is None:
+            sha_now = sha256_file(local.read_bytes())
+        sha_db = row["sha256_img"] or ""
+        if sha_db and sha_db != sha_now:
+            raise ValueError("sha256_img mismatch")
+    else:
+        _ = PREFETCHER.pop_image(local)
 
     parsed = omni_parse_json_single(local)
     return row["id"], row["img_path"], parsed
