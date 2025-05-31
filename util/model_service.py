@@ -34,20 +34,23 @@ class YoloWorker(_BaseProcess):
     def run(self):
         from OmniParser.util.utils import get_yolo_model
         model = get_yolo_model(self.model_path, device=self.device)
-        while True:
-            data = self.in_q.get()
-            if data is None:
-                break
-            paths: List[str] = data
-            imgs = [Image.open(p).convert("RGB") for p in paths]
-            preds = model.predict(imgs, batch=len(imgs), verbose=False)
-            outputs = []
-            for r in preds:
-                boxes = r.boxes.xyxy
-                conf = r.boxes.conf
-                phrases = [str(i) for i in range(len(boxes))]
-                outputs.append((boxes, conf, phrases))
-            self.out_q.put(outputs)
+        try:
+            while True:
+                data = self.in_q.get()
+                if data is None:
+                    break
+                paths: List[str] = data
+                imgs = [Image.open(p).convert("RGB") for p in paths]
+                preds = model.predict(imgs, batch=len(imgs), verbose=False)
+                outputs = []
+                for r in preds:
+                    boxes = r.boxes.xyxy
+                    conf = r.boxes.conf
+                    phrases = [str(i) for i in range(len(boxes))]
+                    outputs.append((boxes, conf, phrases))
+                self.out_q.put(outputs)
+        except KeyboardInterrupt:
+            pass
 
 
 class OCRWorker(_BaseProcess):
@@ -58,20 +61,23 @@ class OCRWorker(_BaseProcess):
     def run(self):
         from OmniParser.util.utils import _get_paddle_ocr, check_ocr_box
         ocr = _get_paddle_ocr(use_gpu=self.use_gpu)
-        while True:
-            data = self.in_q.get()
-            if data is None:
-                break
-            idx, path = data
-            img = Image.open(path).convert("RGB")
-            result = check_ocr_box(
-                img,
-                output_bb_format="xyxy",
-                use_paddleocr=True,
-                paddle_ocr=ocr,
-                easyocr_args={"paragraph": False, "text_threshold": 0.9},
-            )
-            self.out_q.put((idx, result))
+        try:
+            while True:
+                data = self.in_q.get()
+                if data is None:
+                    break
+                idx, path = data
+                img = Image.open(path).convert("RGB")
+                result = check_ocr_box(
+                    img,
+                    output_bb_format="xyxy",
+                    use_paddleocr=True,
+                    paddle_ocr=ocr,
+                    easyocr_args={"paragraph": False, "text_threshold": 0.9},
+                )
+                self.out_q.put((idx, result))
+        except KeyboardInterrupt:
+            pass
 
 
 
