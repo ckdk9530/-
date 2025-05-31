@@ -15,10 +15,11 @@ from PIL import Image
 class ImagePrefetcher:
     """簡單的影像預讀快取，預設保留 5 張。"""
 
-    def __init__(self, size: int = 5, workers: int | None = None) -> None:
+    def __init__(self, size: int = 5, workers: int | None = None, *, calc_sha: bool = True) -> None:
         self.size = size
         self.workers = workers or min(4, os.cpu_count() or 1)
-        self._cache: Dict[Path, Tuple[bytes, str]] = {}
+        self.calc_sha = calc_sha
+        self._cache: Dict[Path, Tuple[bytes, Optional[str]]] = {}
         self._order: deque[Path] = deque()
         self._lock = threading.Lock()
 
@@ -35,7 +36,7 @@ class ImagePrefetcher:
         def _load(path: Path):
             try:
                 data = path.read_bytes()
-                sha = hashlib.sha256(data).hexdigest()
+                sha = hashlib.sha256(data).hexdigest() if self.calc_sha else None
                 return path, data, sha
             except Exception:
                 return None

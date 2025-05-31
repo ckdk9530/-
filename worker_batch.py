@@ -40,7 +40,6 @@ from util.memory import (
 
 import torch
 import gc
-from PIL import Image
 from util.prefetch import ImagePrefetcher
 from util.hash_utils import sha256_file
 
@@ -62,7 +61,7 @@ def _parse_args():
     cli.add_argument(
         "--skip-sha256-check",
         action="store_true",
-        help="跳過 sha256 檢查",
+        help="跳過 sha256 檢查與寫入",
     )
     cli.set_defaults(print_text=True)
     return cli.parse_args()
@@ -259,19 +258,33 @@ def save_debug_results(paths: List[Path], texts: List[List[str]]) -> None:
 
     with engine.begin() as conn:
         for p, txt in zip(paths, texts):
-            conn.execute(
-                _text(
+            if SKIP_SHA256_CHECK:
+                conn.execute(
+                    _text(
+                        """
+                    INSERT INTO captures (timestamp, img_path, status, json_payload)
+                    VALUES (now(), :p, 'done', :j)
+                    ON CONFLICT (img_path) DO UPDATE
+                        SET status = 'done',
+                            json_payload = EXCLUDED.json_payload;
                     """
-                INSERT INTO captures (timestamp, img_path, sha256_img, status, json_payload)
-                VALUES (now(), :p, :s, 'done', :j)
-                ON CONFLICT (img_path) DO UPDATE
-                    SET sha256_img = EXCLUDED.sha256_img,
-                        status = 'done',
-                        json_payload = EXCLUDED.json_payload;
-                """
-                ),
-                dict(p=str(p), s=sha256_file(p.read_bytes()), j=json.dumps(txt, ensure_ascii=False)),
-            )
+                    ),
+                    dict(p=str(p), j=json.dumps(txt, ensure_ascii=False)),
+                )
+            else:
+                conn.execute(
+                    _text(
+                        """
+                    INSERT INTO captures (timestamp, img_path, sha256_img, status, json_payload)
+                    VALUES (now(), :p, :s, 'done', :j)
+                    ON CONFLICT (img_path) DO UPDATE
+                        SET sha256_img = EXCLUDED.sha256_img,
+                            status = 'done',
+                            json_payload = EXCLUDED.json_payload;
+                    """
+                    ),
+                    dict(p=str(p), s=sha256_file(p.read_bytes()), j=json.dumps(txt, ensure_ascii=False)),
+                )
 
 # ───────────────────────────
 # worker_stats helpers (unchanged)
@@ -366,21 +379,34 @@ def claim_tasks(n: int) -> list[dict]:
     return tasks
 
 
-def update_capture_done(conn, cid: int, json_payload: str, sha_now: str) -> None:
+def update_capture_done(conn, cid: int, json_payload: str, sha_now: str | None) -> None:
     """將解析結果寫回資料庫"""
 
-    conn.execute(
-        _text(
+    if sha_now is None:
+        conn.execute(
+            _text(
+                """
+            UPDATE captures
+               SET status      = 'done',
+                   json_payload = :j
+             WHERE id = :cid;
             """
-        UPDATE captures
-           SET status      = 'done',
-               sha256_img  = :s,
-               json_payload = :j
-         WHERE id = :cid;
-        """
-        ),
-        dict(cid=cid, j=json_payload, s=sha_now),
-    )
+            ),
+            dict(cid=cid, j=json_payload),
+        )
+    else:
+        conn.execute(
+            _text(
+                """
+            UPDATE captures
+               SET status      = 'done',
+                   sha256_img  = :s,
+                   json_payload = :j
+             WHERE id = :cid;
+            """
+            ),
+            dict(cid=cid, j=json_payload, s=sha_now),
+        )
 
 
 def mark_error(conn, cid: int) -> None:
@@ -395,12 +421,12 @@ def mark_error(conn, cid: int) -> None:
 # Worker thread – batch version
 # ───────────────────────────
 
-def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
+def handle_rows(rows) -> List[Tuple[int, str, str | None, List[str]]]:
     """批量檢查雜湊 + 推論，回傳 (cid, img_path, sha_now, parsed) 列表"""
-    paths: List[Path | Image.Image] = []
+    paths: List[Path] = []
     cids: List[int] = []
     db_paths: List[str] = []
-    sha_list: List[str] = []
+    sha_list: List[str | None] = []
 
     for row in rows:
         local = db_to_local(row["img_path"])
@@ -408,16 +434,17 @@ def handle_rows(rows) -> List[Tuple[int, str, str, List[str]]]:
             raise FileNotFoundError(local)
 
         assert PREFETCHER is not None
-        sha_now = PREFETCHER.get_sha(local)
-        _ = PREFETCHER.pop_image(local)
-        if sha_now is None:
-            sha_now = sha256_file(local.read_bytes())
-        sha_db = row["sha256_img"] or ""
-        if sha_db and sha_db != sha_now:
-            if SKIP_SHA256_CHECK:
-                logging.warning("skip sha256 mismatch: %s", row["img_path"])
-            else:
+        sha_now: str | None = None
+        if not SKIP_SHA256_CHECK:
+            sha_now = PREFETCHER.get_sha(local)
+            _ = PREFETCHER.pop_image(local)
+            if sha_now is None:
+                sha_now = sha256_file(local.read_bytes())
+            sha_db = row["sha256_img"] or ""
+            if sha_db and sha_db != sha_now:
                 raise ValueError("sha256_img mismatch")
+        else:
+            _ = PREFETCHER.pop_image(local)
         paths.append(local)
         sha_list.append(sha_now)
         cids.append(row["id"])
@@ -482,7 +509,7 @@ def main() -> None:
     PRINT_TEXT = args.print_text
     SKIP_SHA256_CHECK = args.skip_sha256_check
 
-    PREFETCHER = ImagePrefetcher(size=BATCH_SIZE)
+    PREFETCHER = ImagePrefetcher(size=BATCH_SIZE, calc_sha=not SKIP_SHA256_CHECK)
 
     _init_model_processes()
 
