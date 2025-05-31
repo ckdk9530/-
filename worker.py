@@ -408,17 +408,7 @@ def handle_row(row) -> Tuple[int, str, List[dict]]:
         raise FileNotFoundError(local)
 
     assert PREFETCHER is not None
-    sha_now: str | None = None
-    if not SKIP_SHA256_CHECK:
-        sha_now = PREFETCHER.get_sha(local)
-        _ = PREFETCHER.pop_image(local)
-        if sha_now is None:
-            sha_now = sha256_file(local.read_bytes())
-        sha_db = row["sha256_img"] or ""
-        if sha_db and sha_db != sha_now:
-            raise ValueError("sha256_img mismatch")
-    else:
-        _ = PREFETCHER.pop_image(local)
+    _ = PREFETCHER.pop_image(local)
 
     parsed = omni_parse_json_single(local)
     return row["id"], row["img_path"], parsed
