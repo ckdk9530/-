@@ -71,7 +71,6 @@
 4. 将 `json_payload` 与摘要写回数据库；
 5. 若失败，`status` 标记 `error` 并记录日志。
 6. 現已取消批次處理，任務依序解析。
-7. 若需跳過 SHA-256 驗證，可在啟動時加入 `--skip-sha256-check`。
 
 ### 4. RouterOS 心跳监控 (`hb_inotify.py`)
 

@@ -455,7 +455,7 @@ def worker_loop():
 # Boot
 # ───────────────────────────
 def main() -> None:
-    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, PREFETCHER, PRINT_TEXT, SKIP_SHA256_CHECK
+    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, PREFETCHER, PRINT_TEXT
 
     ensure_spawn_start_method()
 
@@ -464,9 +464,8 @@ def main() -> None:
     DEBUG_IMG = args.img
     DEBUG_DIR = args.debug_dir
     PRINT_TEXT = args.print_text
-    SKIP_SHA256_CHECK = args.skip_sha256_check
 
-    PREFETCHER = ImagePrefetcher(size=1, calc_sha=not SKIP_SHA256_CHECK)
+    PREFETCHER = ImagePrefetcher(size=1)
 
     _init_model_processes()
 
