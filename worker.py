@@ -158,6 +158,16 @@ def omni_parse_json_batch(
     return outputs
 
 
+def collect_contents(data: List[dict]) -> List[str]:
+    """Extract non-empty 'content' fields from parsed result."""
+    contents = []
+    for item in data:
+        c = item.get("content")
+        if c:
+            contents.append(c)
+    return contents
+
+
 def sec_to_hms(seconds: float) -> str:
     """Convert seconds to HH:MM:SS string; if under one second show ms."""
     if seconds < 1:
@@ -174,7 +184,9 @@ def sec_to_hms(seconds: float) -> str:
 def _run_debug():
     if DEBUG and not DEBUG_DIR:
         p = Path(DEBUG_IMG) if DEBUG_IMG else Path(input("Image path » ").strip())
-        print(json.dumps(omni_parse_json_single(p), ensure_ascii=False, indent=2))
+        raw = omni_parse_json_single(p)
+        filtered = collect_contents(raw)
+        print(json.dumps(filtered, ensure_ascii=False, indent=2))
         return True
 
     if DEBUG_DIR:
@@ -189,7 +201,7 @@ def _run_debug():
         for img in imgs:
             t0 = time.perf_counter()
             with contextlib.redirect_stdout(io.StringIO()):
-                result = omni_parse_json_single(img)
+                result = collect_contents(omni_parse_json_single(img))
             t1 = time.perf_counter()
 
             save_debug_results([Path(img)], [result])
@@ -401,7 +413,7 @@ def mark_error(conn, cid: int) -> None:
 # Worker thread – batch version
 # ───────────────────────────
 
-def handle_row(row) -> Tuple[int, str, List[dict]]:
+def handle_row(row) -> Tuple[int, str, List[str]]:
     """檢查雜湊並解析單張圖片"""
     local = db_to_local(row["img_path"])
     if not local.exists():
@@ -411,7 +423,8 @@ def handle_row(row) -> Tuple[int, str, List[dict]]:
     _ = PREFETCHER.pop_image(local)
 
     parsed = omni_parse_json_single(local)
-    return row["id"], row["img_path"], parsed
+    filtered = collect_contents(parsed)
+    return row["id"], row["img_path"], filtered
 
 
 def worker_loop():
