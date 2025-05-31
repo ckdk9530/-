@@ -42,7 +42,7 @@
 .
 ├── amikon_network.py   # 屏幕抓取客戶端
 ├── sync.py             # NAS → PostgreSQL 同步
-├── worker_batch.py     # GPU OCR 解析
+├── worker_batch.py     # GPU OCR 解析（已改為順序執行）
 ├── hb_inotify.py       # RouterOS 心跳監控
 ├── util/               # 共用工具模組
 ├── webui/              # FastAPI + 靜態頁範例
@@ -70,7 +70,8 @@
 3. 调用 OmniParser (YOLOv8 + LayoutLMv3) 抽取 UI 文字；
 4. 将 `json_payload` 与摘要写回数据库；
 5. 若失败，`status` 标记 `error` 并记录日志。
-6. 若需跳過 SHA-256 驗證，可在啟動時加入 `--skip-sha256-check`。
+6. 現已取消批次處理，任務依序解析。
+7. 若需跳過 SHA-256 驗證，可在啟動時加入 `--skip-sha256-check`。
 
 ### 4. RouterOS 心跳监控 (`hb_inotify.py`)
 

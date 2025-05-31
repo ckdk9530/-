@@ -14,8 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
-import threading
 import time
 from pathlib import Path
 from typing import List, Tuple
@@ -27,7 +25,6 @@ import paddle
 import contextlib
 import io
 import atexit
-import multiprocessing as mp
 import uuid
 
 from util.model_service import ensure_spawn_start_method
@@ -51,7 +48,6 @@ def _parse_args():
     cli.add_argument("--debug", action="store_true", help="單張 debug")
     cli.add_argument("--img", help="單張路徑")
     cli.add_argument("--debug-dir", help="資料夾批量 debug")
-    cli.add_argument("--batch-size", type=int, default=8, help="一次 GPU 推論張數")
     cli.add_argument(
         "--no-print-text",
         dest="print_text",
@@ -70,7 +66,6 @@ args = None  # type: argparse.Namespace | None
 DEBUG = False
 DEBUG_IMG: str | None = None
 DEBUG_DIR: str | None = None
-BATCH_SIZE = 8
 PRINT_TEXT = True
 SKIP_SHA256_CHECK = False
 
@@ -173,24 +168,22 @@ def _run_debug():
         durations: List[float] = []
         processed = 0
 
-        for i in range(0, len(imgs), BATCH_SIZE):
-            batch = imgs[i : i + BATCH_SIZE]
+        for img in imgs:
             t0 = time.perf_counter()
             with contextlib.redirect_stdout(io.StringIO()):
-                results = omni_parse_json_batch(batch)
+                result = omni_parse_json_single(img)
             t1 = time.perf_counter()
 
-            save_debug_results([Path(p) for p in batch], results)
+            save_debug_results([Path(img)], [result])
 
-            if PRINT_TEXT and i == 0:
-                print("First batch text:")
-                for t in results:
-                    print(t)
+            if PRINT_TEXT and processed == 0:
+                print("First text:")
+                print(result)
 
-            per_img = (t1 - t0) / len(batch)
-            durations.extend([per_img] * len(batch))
+            per_img = t1 - t0
+            durations.append(per_img)
 
-            processed += len(batch)
+            processed += 1
             elapsed = time.perf_counter() - start_all
             avg_so_far = sum(durations) / len(durations)
             eta = max(len(imgs) - processed, 0) * avg_so_far
@@ -214,8 +207,6 @@ def _run_debug():
 # Normal-mode Config & DB deps
 # ───────────────────────────
 LOG_LEVEL  = "INFO"
-THREADS    = 4           # DB 輪詢 / commit 執行緒數
-# BATCH_SIZE 由 CLI 參數決定 (預設 8)
 
 from sqlalchemy.engine import URL
 
@@ -237,9 +228,9 @@ logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
-engine = create_engine(DB_URL, pool_size=THREADS * 2, max_overflow=0)
+engine = create_engine(DB_URL, pool_size=2, max_overflow=0)
 
-# 影像預讀快取，容量與分批大小一致
+# 影像預讀快取
 PREFETCHER: ImagePrefetcher | None = None
 
 # ───────────────────────────
@@ -421,72 +412,50 @@ def mark_error(conn, cid: int) -> None:
 # Worker thread – batch version
 # ───────────────────────────
 
-def handle_rows(rows) -> List[Tuple[int, str, str | None, List[str]]]:
-    """批量檢查雜湊 + 推論，回傳 (cid, img_path, sha_now, parsed) 列表"""
-    paths: List[Path] = []
-    cids: List[int] = []
-    db_paths: List[str] = []
-    sha_list: List[str | None] = []
+def handle_row(row) -> Tuple[int, str, str | None, List[str]]:
+    """檢查雜湊並解析單張圖片"""
+    local = db_to_local(row["img_path"])
+    if not local.exists():
+        raise FileNotFoundError(local)
 
-    for row in rows:
-        local = db_to_local(row["img_path"])
-        if not local.exists():
-            raise FileNotFoundError(local)
+    assert PREFETCHER is not None
+    sha_now: str | None = None
+    if not SKIP_SHA256_CHECK:
+        sha_now = PREFETCHER.get_sha(local)
+        _ = PREFETCHER.pop_image(local)
+        if sha_now is None:
+            sha_now = sha256_file(local.read_bytes())
+        sha_db = row["sha256_img"] or ""
+        if sha_db and sha_db != sha_now:
+            raise ValueError("sha256_img mismatch")
+    else:
+        _ = PREFETCHER.pop_image(local)
 
-        assert PREFETCHER is not None
-        sha_now: str | None = None
-        if not SKIP_SHA256_CHECK:
-            sha_now = PREFETCHER.get_sha(local)
-            _ = PREFETCHER.pop_image(local)
-            if sha_now is None:
-                sha_now = sha256_file(local.read_bytes())
-            sha_db = row["sha256_img"] or ""
-            if sha_db and sha_db != sha_now:
-                raise ValueError("sha256_img mismatch")
-        else:
-            _ = PREFETCHER.pop_image(local)
-        paths.append(local)
-        sha_list.append(sha_now)
-        cids.append(row["id"])
-        db_paths.append(row["img_path"])
-
-    parsed_batch = omni_parse_json_batch(paths)
-    return [
-        (cid, db_p, sha, parsed)
-        for cid, db_p, sha, parsed in zip(cids, db_paths, sha_list, parsed_batch)
-    ]
+    parsed = omni_parse_json_single(local)
+    return row["id"], row["img_path"], sha_now, parsed
 
 
 def worker_loop():
-    task_queue: list[dict] = []
     while True:
-        if len(task_queue) < BATCH_SIZE:
-            new_rows = claim_tasks(BATCH_SIZE - len(task_queue))
-            if new_rows:
-                task_queue.extend(new_rows)
-
-        if len(task_queue) < BATCH_SIZE:
-            if not task_queue:
-                time.sleep(2)
+        rows = claim_tasks(1)
+        if not rows:
+            time.sleep(2)
             continue
-
-        rows = [task_queue.pop(0) for _ in range(min(BATCH_SIZE, len(task_queue)))]
+        row = rows[0]
         try:
             with engine.begin() as conn:
-                # 記錄目前批次第一張做進度即可
-                stats_progress(conn, rows[0]["img_path"])
-            batch_info = handle_rows(rows)
+                stats_progress(conn, row["img_path"])
+            info = handle_row(row)
             with engine.begin() as conn:
-                for cid, _db_p, sha_now, parsed in batch_info:
-                    update_capture_done(conn, cid, json.dumps(parsed, ensure_ascii=False), sha_now)
-                stats_done(conn, ok=len(batch_info))
-            logging.info("DONE ids=%s", ",".join(str(r[0]) for r in batch_info))
+                cid, _db_p, sha_now, parsed = info
+                update_capture_done(conn, cid, json.dumps(parsed, ensure_ascii=False), sha_now)
+                stats_done(conn, ok=1)
+            logging.info("DONE id=%s", info[0])
         except Exception:
-            logging.exception("ERR batch (ids=%s)", ",".join(str(r["id"]) for r in rows))
+            logging.exception("ERR id=%s", row["id"])
             with engine.begin() as conn:
-                for r in rows:
-                    mark_error(conn, r["id"])
-                stats_done(conn, err=len(rows))
+                mark_error(conn, row["id"])
+                stats_done(conn, err=1)
         finally:
             gc.collect()
             if torch.cuda.is_available():
@@ -497,7 +466,7 @@ def worker_loop():
 # Boot
 # ───────────────────────────
 def main() -> None:
-    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, BATCH_SIZE, PREFETCHER, PRINT_TEXT, SKIP_SHA256_CHECK
+    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, PREFETCHER, PRINT_TEXT, SKIP_SHA256_CHECK
 
     ensure_spawn_start_method()
 
@@ -505,11 +474,10 @@ def main() -> None:
     DEBUG = args.debug or bool(args.debug_dir)
     DEBUG_IMG = args.img
     DEBUG_DIR = args.debug_dir
-    BATCH_SIZE = args.batch_size
     PRINT_TEXT = args.print_text
     SKIP_SHA256_CHECK = args.skip_sha256_check
 
-    PREFETCHER = ImagePrefetcher(size=BATCH_SIZE, calc_sha=not SKIP_SHA256_CHECK)
+    PREFETCHER = ImagePrefetcher(size=1, calc_sha=not SKIP_SHA256_CHECK)
 
     _init_model_processes()
 
@@ -519,16 +487,11 @@ def main() -> None:
     with engine.begin() as conn:
         stats_init(conn)
     logging.info(
-        "Worker started (threads=%d, batch=%d, device=%s)",
-        THREADS,
-        BATCH_SIZE,
+        "Worker started (device=%s)",
         DEVICE,
     )
-    for _ in range(THREADS):
-        threading.Thread(target=worker_loop, daemon=True).start()
     try:
-        while True:
-            time.sleep(60)
+        worker_loop()
     except KeyboardInterrupt:
         logging.info("Shutdown – bye")
 
