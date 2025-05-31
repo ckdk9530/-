@@ -83,6 +83,7 @@
 * **前端**：React + Tailwind + shadcn/ui，可视化图表使用 Recharts。
 * **连接**：通过环境变量 `DATABASE_URL` 直连 GPU Workstation 上的 Postgres。
 * **启动草稿**：`uvicorn webui.app.main:app --reload` ，浏览器打开 `http://localhost:8000/static/index.html` 查看介面。
+* **单张测试**：`python single_image_gradio.py`，以 Gradio 介面上传图片解析。
 
 ## 数据库概要
 
