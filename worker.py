@@ -66,18 +66,28 @@ PRINT_TEXT = True
 # ───────────────────────────
 # Model utils
 # ───────────────────────────
-from OmniParser.util.utils import get_som_labeled_img
+from OmniParser.util.utils import (
+    get_som_labeled_img,
+    get_som_parsed_json,
+    get_caption_model_processor,
+)
 from util.model_service import YoloWorker, OCRWorker
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 yolo_proc: YoloWorker | None = None
 ocr_proc: OCRWorker | None = None
+caption_model_processor = None
 
 def _init_model_processes():
-    global yolo_proc, ocr_proc
+    global yolo_proc, ocr_proc, caption_model_processor
     yolo_proc = YoloWorker("weights/icon_detect/model.pt", device=DEVICE)
     ocr_proc = OCRWorker(use_gpu=(DEVICE == "cuda"))
+    caption_model_processor = get_caption_model_processor(
+        model_name="florence2",
+        model_name_or_path="weights/icon_caption_florence",
+        device=DEVICE,
+    )
     for p in (yolo_proc, ocr_proc):
         p.start()
     atexit.register(_shutdown_processes)
@@ -129,9 +139,23 @@ def omni_parse_json_batch(
     ocr_results = [None] * len(paths)
     for _ in paths:
         idx, res = ocr_proc.out_q.get()
-        ocr_results[idx] = res[0][0]
+        ocr_results[idx] = res[0]
 
-    return ocr_results
+    outputs: List[List[str]] = []
+    for path, yolo_res, (ocr_text, ocr_bbox) in zip(paths, yolo_results, ocr_results):
+        parsed = get_som_parsed_json(
+            path,
+            BOX_TRESHOLD=box_threshold,
+            ocr_bbox=ocr_bbox,
+            caption_model_processor=caption_model_processor,
+            ocr_text=ocr_text,
+            iou_threshold=iou_threshold,
+            imgsz=imgsz,
+            yolo_result=yolo_res,
+        )
+        outputs.append(parsed)
+
+    return outputs
 
 
 def sec_to_hms(seconds: float) -> str:
