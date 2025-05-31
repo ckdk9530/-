@@ -10,7 +10,6 @@ import pyinotify
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
-from util.hash_utils import sha256_file
 
 # ─── 基本設定 ─────────────────────────────────────
 ROOT_DIR = Path("/volume1/ScreenshotService")
@@ -35,31 +34,27 @@ INSERT_SQL = text(
     f"""
     INSERT INTO captures (
         timestamp, computer_name, mac_address, monitor_no,
-        img_path, sha256_img, status, last_sync)
+        img_path, status, last_sync)
     VALUES (
         (now() AT TIME ZONE '{LOCAL_TZ}'),
         split_part(split_part(:p,'/',4),'_',1),
         lower(right(split_part(:p,'/',4), 12)),
         split_part(split_part(:p, '_display_', 2), '.', 1)::int,
         :p,
-        :s,
         'pending',
         to_timestamp(regexp_replace(:p,
             '^.*screenshot_(\\d{{4}}-\\d{{2}}-\\d{{2}})_(\\d{{2}})-(\\d{{2}})-(\\d{{2}})_display_\\d+.*$',
             '\\1 \\2:\\3:\\4'), 'YYYY-MM-DD HH24:MI:SS')
     )
     ON CONFLICT (img_path) DO UPDATE
-        SET sha256_img = EXCLUDED.sha256_img,
-            status     = 'pending'
-    WHERE captures.sha256_img IS DISTINCT FROM EXCLUDED.sha256_img;
+        SET status = 'pending';
     """
 )
 
 
 def insert_capture(path: Path) -> None:
-    sha = sha256_file(path.read_bytes())
     with engine.begin() as conn:
-        conn.execute(INSERT_SQL, dict(p=str(path), s=sha))
+        conn.execute(INSERT_SQL, dict(p=str(path)))
 
 
 # ─── inotify handlers ─────────────────────────────────

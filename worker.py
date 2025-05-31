@@ -377,27 +377,18 @@ def mark_error(conn, cid: int) -> None:
 # Worker thread – batch version
 # ───────────────────────────
 
-def handle_row(row) -> Tuple[int, str, str | None, List[str]]:
-    """檢查雜湊並解析單張圖片"""
+def handle_row(row) -> Tuple[int, str, List[str]]:
+    """解析單張圖片"""
     local = db_to_local(row["img_path"])
     if not local.exists():
         raise FileNotFoundError(local)
 
     assert PREFETCHER is not None
-    sha_now: str | None = None
-    if not SKIP_SHA256_CHECK:
-        sha_now = PREFETCHER.get_sha(local)
-        _ = PREFETCHER.pop_image(local)
-        if sha_now is None:
-            sha_now = sha256_file(local.read_bytes())
-        sha_db = row["sha256_img"] or ""
-        if sha_db and sha_db != sha_now:
-            raise ValueError("sha256_img mismatch")
-    else:
-        _ = PREFETCHER.pop_image(local)
+
+    _ = PREFETCHER.pop_image(local)
 
     parsed = omni_parse_json_single(local)
-    return row["id"], row["img_path"], sha_now, parsed
+    return row["id"], row["img_path"], parsed
 
 
 def worker_loop():
@@ -412,8 +403,8 @@ def worker_loop():
                 stats_progress(conn, row["img_path"])
             info = handle_row(row)
             with engine.begin() as conn:
-                cid, _db_p, sha_now, parsed = info
-                update_capture_done(conn, cid, json.dumps(parsed, ensure_ascii=False), sha_now)
+                cid, _db_p, parsed = info
+                update_capture_done(conn, cid, json.dumps(parsed, ensure_ascii=False))
                 stats_done(conn, ok=1)
             logging.info("DONE id=%s", info[0])
         except Exception:
@@ -431,7 +422,7 @@ def worker_loop():
 # Boot
 # ───────────────────────────
 def main() -> None:
-    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, PREFETCHER, PRINT_TEXT, SKIP_SHA256_CHECK
+    global args, DEBUG, DEBUG_IMG, DEBUG_DIR, PREFETCHER, PRINT_TEXT
 
     ensure_spawn_start_method()
 
@@ -440,9 +431,8 @@ def main() -> None:
     DEBUG_IMG = args.img
     DEBUG_DIR = args.debug_dir
     PRINT_TEXT = args.print_text
-    SKIP_SHA256_CHECK = args.skip_sha256_check
 
-    PREFETCHER = ImagePrefetcher(size=1, calc_sha=not SKIP_SHA256_CHECK)
+    PREFETCHER = ImagePrefetcher(size=1)
 
     _init_model_processes()
 
